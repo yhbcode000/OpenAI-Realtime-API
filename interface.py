@@ -172,33 +172,60 @@ class Interface:
         try:
             async for message in self.ws:
                 event: tp.Dict = json.loads(message)
-                event_type = event['type']
-                event_id = event['event_id']
-                if event_type == ERROR:
-                    error = event['error']
-                    self.onServerError(
-                        event_id, 
-                        error['type'], error['code'], error['message'], 
-                        error['param'], error['event_id'],
-                    )
-                elif event_type == f'{SESSION}.{CREATED}':
-                    session: tp.Dict = event['session']
-                    session_id = session.pop('session_id')
-                    model = session.pop('model')
-                    self.onServerSessionCreated(
-                        event_id, 
-                        SessionConfig.fromPrimitive(session), 
-                        session_id, model, 
-                    )
+                await self.onServerEvent(event)
         except websockets.ConnectionClosed:
             if not self.closed_by_me:
                 raise
+
+    async def onServerEvent(self, event: tp.Dict):
+        with MustDrain(event) as (e, mutateE):
+            event_type = e.pop('type')
+            event_id = e.pop('event_id')
+            if event_type == ERROR:
+                with MustDrain(e.pop('error')) as (error, _):
+                    self.onServerError(
+                        event_id, 
+                        error.pop('type'), error.pop('code'), 
+                        error.pop('message'), error.pop('param'), 
+                        error.pop('event_id'),
+                    )
+            elif event_type in (
+                f'{SESSION}.{CREATED}', 
+                f'{SESSION}.{UPDATED}', 
+            ):
+                with MustDrain(e.pop('session')) as (session, mutateSession):
+                    session_id = session.pop('id')
+                    model = session.pop('model')
+                    assert session.pop('object') == f'{REALTIME}.{SESSION}'
+                    sessionConfig, r = SessionConfig.fromPrimitive(session)
+                    mutateSession(r)
+                    if event_type == f'{SESSION}.{CREATED}':
+                        self.onServerSessionCreated(
+                            event_id, 
+                            sessionConfig, 
+                            session_id, model, 
+                        )
+                    else:
+                        self.onServerSessionUpdated(
+                            event_id, 
+                            sessionConfig, 
+                            session_id, model, 
+                        )
+            elif event_type == f'{CONVERSATION}.{CREATED}':
+                with MustDrain(e.pop('conversation')) as (conversation, _):
+                    assert conversation.pop('object') == f'{REALTIME}.{CONVERSATION}'
+                    self.onServerConversationCreated(
+                            event_id, conversation.pop('id'), 
+                        )
     
     def onServerError(
         self, event_id: str, 
         error_type: str, code: str | None, message: str, 
         param: str | None, caused_by_client_event_id: str, 
     ):
+        '''
+        Override this. 
+        '''
         print(
             '[Error]', TAG, ':', error_type, code, ':', message, 
             param, f'; {caused_by_client_event_id = }', 
@@ -209,4 +236,26 @@ class Interface:
         sessionConfig: SessionConfig,
         session_id: str, model: str, 
     ):
+        '''
+        Override this. 
+        '''
+        pass
+
+    def onServerSessionUpdated(
+        self, event_id: str, 
+        sessionConfig: SessionConfig,
+        session_id: str, model: str, 
+    ):
+        '''
+        Override this. 
+        '''
+        pass
+    
+    def onServerConversationCreated(
+        self, event_id: str, 
+        conversation_id: str, 
+    ):
+        '''
+        Override this. 
+        '''
         pass

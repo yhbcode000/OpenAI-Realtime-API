@@ -7,6 +7,7 @@ from __future__ import annotations
 import typing as tp
 from enum import Enum
 from dataclasses import dataclass
+from contextlib import contextmanager
 
 class OmitType: 
     _singleton = None
@@ -25,6 +26,7 @@ def withoutOmits(x: tp.Dict, /):
     return {k: v for k, v in x.items() if v is not OMIT}
 
 UPDATE = 'update'
+UPDATED = 'updated'
 APPEND = 'append'
 COMMIT = 'commit'
 CLEAR = 'clear'
@@ -34,6 +36,7 @@ TRUNCATE = 'truncate'
 DELETE = 'delete'
 CANCEL = 'cancel'
 
+REALTIME = 'realtime'
 SESSION = 'session'
 INPUT_AUDIO_BUFFER = 'input_audio_buffer'
 CONVERSATION = 'conversation'
@@ -41,8 +44,18 @@ ITEM = 'item'
 RESPONSE = 'response'
 ERROR = 'error'
 
-def assertAllConsumed(a: tp.Dict, /):
-    assert not a, f'Unconsumed items: {a}'
+@contextmanager
+def MustDrain(a: tp.Dict, /):
+    remaining = {**a}
+
+    def mutate(new_dict: tp.Dict, /):
+        remaining.clear()
+        remaining.update(new_dict)
+    
+    try:
+        yield remaining, mutate
+    finally:
+        assert not remaining, f'Unconsumed items: {remaining}'
 
 class Modality(Enum):
     TEXT = 'text'
@@ -65,15 +78,29 @@ class TurnDetectionConfig:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
-        instance = __class__(
-            d.pop('type'),
-            d.pop('threshold'),
-            d.pop('prefix_padding_ms'),
-            d.pop('silence_duration_ms'),
-        )
-        assertAllConsumed(d)
-        return instance
+        remaining = {**a}
+        try:
+            instance = __class__(
+                remaining.pop('type'),
+                remaining.pop('threshold'),
+                remaining.pop('prefix_padding_ms'),
+                remaining.pop('silence_duration_ms'),
+            )
+        except KeyError:
+            assert a['type'] == 'none', a
+            assert remaining.pop('prefix_padding_ms', None) is None
+            assert remaining.pop('silence_duration_ms', None) is None
+            return None, remaining
+        return instance, remaining
+
+def isTurnDetectionServerVad(a: TurnDetectionConfig | None, /):
+    if a is None:
+        return False
+    if a.type_ == "server_vad":
+        return True
+    elif a.type_ == "none":
+        return False
+    raise ValueError(a.type_)
 
 class ToolType(Enum):
     CODE_INTERPRETER = 'code_interpreter'
@@ -103,18 +130,18 @@ class Tool:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
-        type_ = ToolType(d.pop('type'))
+        remaining = {**a}
+        type_ = ToolType(remaining.pop('type'))
         if type_ == ToolType.FUNCTION:
+            function_, remaining_now = Function.fromPrimitive(remaining)
+            del remaining
             return __class__(
-                type_,
-                Function.fromPrimitive(d),  # inside it asserts `d` is consumed.
-            )
-        assert d.pop('name',        None) is None
-        assert d.pop('description', None) is None
-        assert d.pop('parameters',  None) is None
-        assertAllConsumed(d)
-        return __class__(type_, None)
+                type_, function_, 
+            ), remaining_now
+        assert remaining.pop('name',        None) is None
+        assert remaining.pop('description', None) is None
+        assert remaining.pop('parameters',  None) is None
+        return __class__(type_, None), remaining
 
 @dataclass(frozen=True)
 class Function:
@@ -131,14 +158,20 @@ class Function:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
+        remaining = {**a}
+        with MustDrain(remaining.pop('parameters')) as (
+            parameters_primitive, mutate, 
+        ):
+            parameters, r = Parameters.fromPrimitive(
+                parameters_primitive, 
+            )
+            mutate(r)
         instance = __class__(
-            d.pop('name'),
-            d.pop('description'),
-            Parameters.fromPrimitive(d.pop('parameters')),
+            remaining.pop('name'),
+            remaining.pop('description'),
+            parameters,
         )
-        assertAllConsumed(d)
-        return instance
+        return instance, remaining
 
 @dataclass(frozen=True)
 class Parameters:
@@ -157,16 +190,19 @@ class Parameters:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
-        properties: tp.Dict = d.pop('properties')
+        remaining = {**a}
+        properties = {}
+        for k, v in remaining.pop('properties').items():
+            with MustDrain(v) as (property_primitive, mutate):
+                properties[k], r = Property.fromPrimitive(property_primitive)
+                mutate(r)
         instance = __class__(
-            d.pop('type'),
-            {k: Property.fromPrimitive(v) for k, v in properties.items()},
-            d.pop('required'),
-            d.pop('additionalProperties'),
+            remaining.pop('type'),
+            properties,
+            remaining.pop('required'),
+            remaining.pop('additionalProperties'),
         )
-        assertAllConsumed(d)
-        return instance
+        return instance, remaining
 
 @dataclass(frozen=True)
 class Property:
@@ -181,13 +217,12 @@ class Property:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
+        remaining = {**a}
         instance = __class__(
-            d.pop('type'),
-            d.pop('description'),
+            remaining.pop('type'),
+            remaining.pop('description'),
         )
-        assertAllConsumed(d)
-        return instance
+        return instance, remaining
 
 class InfType(Enum):
     INF = 'inf'
@@ -300,29 +335,34 @@ class ResponseConfig:
             ],
             'tool_choice': self.tool_choice,
             'temperature': self.temperature,
-            'max_output_tokens': self.max_output_tokens,
+            'max_output_tokens': str(self.max_output_tokens) if isinstance(
+                self.max_output_tokens, InfType,
+            ) else self.max_output_tokens, 
         })
 
     @staticmethod
-    def fromPrimitiveRecycle(a: tp.Dict, /):
-        d = {**a}
-        instance = __class__(
-            [Modality(x) for x in d.pop('modalities')], 
-            d.pop('instructions'), 
-            d.pop('voice'), 
-            d.pop('output_audio_format'), 
-            [Tool.fromPrimitive(x) for x in d.pop('tools')], 
-            d.pop('tool_choice'), 
-            d.pop('temperature'), 
-            d.pop('max_output_tokens'), 
-        )
-        return instance, d
-
-    @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        instance, d = __class__.fromPrimitiveRecycle(a)
-        assertAllConsumed(d)
-        return instance
+        remaining = {**a}
+        max_output_tokens = remaining.pop('max_output_tokens')
+        tools = []
+        for x in remaining.pop('tools'):
+            with MustDrain(x) as (tool_primitive, mutate):
+                tool, r = Tool.fromPrimitive(tool_primitive)
+                tools.append(tool)
+                mutate(r)
+        instance = __class__(
+            [Modality(x) for x in remaining.pop('modalities')], 
+            remaining.pop('instructions'), 
+            remaining.pop('voice'), 
+            remaining.pop('output_audio_format'), 
+            tools,
+            remaining.pop('tool_choice'), 
+            remaining.pop('temperature'), 
+            max_output_tokens if isinstance(
+                max_output_tokens, int, 
+            ) else InfType(max_output_tokens),
+        )
+        return instance, remaining
 
 @dataclass(frozen=True)
 class SessionConfig:
@@ -341,14 +381,26 @@ class SessionConfig:
     
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
-        d = {**a}
-        responseConfig, d_ = ResponseConfig.fromPrimitiveRecycle(d)
-        del d
+        remaining = {**a}
+        responseConfig, remaining_now = ResponseConfig.fromPrimitive(remaining)
+        del remaining
+        with MustDrain(remaining_now.pop(
+            'input_audio_transcription', 
+        )) as (input_audio_transcription, _):
+            if input_audio_transcription.pop('enabled'):
+                input_audio_transcription_model = input_audio_transcription.pop('model')
+            else:
+                input_audio_transcription_model = None
+                assert input_audio_transcription.pop('model', None) is None
+        with MustDrain(remaining_now.pop(
+            'turn_detection', 
+        )) as (turn_detection_primitive, mutate):
+            turn_detection, r = TurnDetectionConfig.fromPrimitive(turn_detection_primitive)
+            mutate(r)
         instance = __class__(
             responseConfig,
-            d_.pop('input_audio_format'),
-            d_.pop('input_audio_transcription_model'),
-            TurnDetectionConfig.fromPrimitive(d_.pop('turn_detection')),
+            remaining_now.pop('input_audio_format'),
+            input_audio_transcription_model,
+            turn_detection,
         )
-        assertAllConsumed(d_)
-        return instance
+        return instance, remaining_now
