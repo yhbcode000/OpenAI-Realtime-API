@@ -8,6 +8,9 @@ import typing as tp
 from enum import Enum
 from dataclasses import dataclass
 from contextlib import contextmanager
+import warnings
+
+TAG = 'OpenAI Realtime API'
 
 class OmitType: 
     _singleton = None
@@ -29,12 +32,23 @@ UPDATE = 'update'
 UPDATED = 'updated'
 APPEND = 'append'
 COMMIT = 'commit'
+COMMITTED = 'committed'
 CLEAR = 'clear'
+CLEARED = 'cleared'
 CREATE = 'create'
 CREATED = 'created'
 TRUNCATE = 'truncate'
+TRUNCATED = 'truncated'
 DELETE = 'delete'
+DELETED = 'deleted'
 CANCEL = 'cancel'
+COMPLETED = 'completed'
+FAILED = 'failed'
+SPEECH_STARTED = 'speech_started'
+SPEECH_STOPPED = 'speech_stopped'
+DONE = 'done'
+ADDED = 'added'
+DELTA = 'delta'
 
 REALTIME = 'realtime'
 SESSION = 'session'
@@ -43,6 +57,14 @@ CONVERSATION = 'conversation'
 ITEM = 'item'
 RESPONSE = 'response'
 ERROR = 'error'
+INPUT_AUDIO_TRANSCRIPTION = 'input_audio_transcription'
+OUTPUT_ITEM = 'output_item'
+CONTENT_PART = 'content_part'
+TEXT = 'text'
+AUDIO_TRANSCRIPT = 'audio_transcript'   # think "output_"audio_transcription
+AUDIO = 'audio'
+FUNCTION_CALL_ARGUMENTS = 'function_call_arguments'
+RATE_LIMITS = 'rate_limits'
 
 @contextmanager
 def MustDrain(a: tp.Dict, /):
@@ -265,6 +287,28 @@ class ConversationItem:
             'arguments': self.arguments,
             'output': self.output,
         }
+    
+    @staticmethod
+    def fromPrimitive(a: tp.Dict, /):
+        remaining = {**a}
+        content = []
+        for x in remaining.pop('content'):
+            with MustDrain(x) as (content_primitive, mutate):
+                contentPart, r = ContentPart.fromPrimitive(content_primitive)
+                content.append(contentPart)
+                mutate(r)
+        instance = __class__(
+            remaining.pop('id'),
+            ConversationItemType(remaining.pop('type')),
+            Status              (remaining.pop('status')),
+            Role                (remaining.pop('role')),
+            content,
+            remaining.pop('call_id', None),
+            remaining.pop('name', None),
+            remaining.pop('arguments', None),
+            remaining.pop('output', None),
+        )
+        return instance, remaining
 
 class ConversationItemType(Enum):
     MESSAGE = 'message'
@@ -304,6 +348,17 @@ class ContentPart:
             'audio': self.audio,
             'transcript': self.transcript,
         }
+    
+    @staticmethod
+    def fromPrimitive(a: tp.Dict, /):
+        remaining = {**a}
+        instance = __class__(
+            ContentPartType(remaining.pop('type')),
+            remaining.pop('text', None),
+            remaining.pop('audio', None),
+            remaining.pop('transcript', None),
+        )
+        return instance, remaining
 
 class ContentPartType(Enum):
     INPUT_TEXT = 'input_text'
@@ -404,3 +459,81 @@ class SessionConfig:
             turn_detection,
         )
         return instance, remaining_now
+
+@dataclass(frozen=True)
+class OpenAIError:
+    type_: str
+    code: str | None
+    message: str
+    param: str | None
+    caused_by_client_event_id: str | None
+
+    @staticmethod
+    def fromPrimitive(a: tp.Dict, /):
+        remaining = {**a}
+        instance = __class__(
+            remaining.pop('type'),
+            remaining.pop('code', None),
+            remaining.pop('message'),
+            remaining.pop('param', None),
+            remaining.pop('event_id', None),
+        )
+        return instance, remaining
+    
+    def warn(self):
+        warnings.warn(str(self))
+    
+    def throw(self):
+        raise RuntimeError(str(self))
+    
+    def __repr__(self):
+        return f'''\
+[Error] {TAG}: {self.type_} {self.code}: \
+{self.message} {self.param}; \
+{self.caused_by_client_event_id = }\
+'''
+
+@dataclass(frozen=True)
+class Response:
+    id_: str
+    status: Status
+    status_details: tp.Dict | None
+    output: tp.List[ConversationItem]
+    usage: tp.Dict | None
+    # known keys of `usage`, undocumented: 'total_tokens', 'input_tokens', 'output_tokens'
+
+    @staticmethod
+    def fromPrimitive(a: tp.Dict, /):
+        remaining = {**a}
+        output = []
+        for x in remaining.pop('output'):
+            with MustDrain(x) as (conversation_item_primitive, mutate):
+                conversationItem, r = ConversationItem.fromPrimitive(conversation_item_primitive)
+                output.append(conversationItem)
+                mutate(r)
+        instance = __class__(
+            remaining.pop('id'),
+            Status(remaining.pop('status')),
+            remaining.pop('status_details', None),
+            output,
+            remaining.pop('usage', None),
+        )
+        return instance, remaining
+
+@dataclass(frozen=True)
+class RateLimit:
+    name: str
+    limit: int
+    remaining: int
+    reset_seconds: float
+
+    @staticmethod
+    def fromPrimitive(a: tp.Dict, /):
+        remaining = {**a}
+        instance = __class__(
+            remaining.pop('name'),
+            remaining.pop('limit'),
+            remaining.pop('remaining'),
+            remaining.pop('reset_seconds'),
+        )
+        return instance, remaining
