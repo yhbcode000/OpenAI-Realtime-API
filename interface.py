@@ -11,32 +11,13 @@ MODEL = 'gpt-4o-realtime-preview-2024-10-01'    # The only available model at th
 
 ENDPOINT = 'wss://api.openai.com/v1/realtime'
 
-@dataclass
-class ResponseConfig:
-    modalities: tp.List[Modality] | OmitType = OMIT
-    instructions: str | OmitType = OMIT
-    voice: str | OmitType = OMIT
-    output_audio_format: str | OmitType = OMIT
-    tools: tp.List[Tool] | OmitType = OMIT
-    tool_choice: str | OmitType = OMIT
-    temperature: float | OmitType = OMIT
-    max_output_tokens: int | InfType | OmitType = OMIT
-
-    def asPrimitive(self):
-        return withoutOmits({
-            'modalities': [str(x) for x in self.modalities],
-            'instructions': self.instructions,
-            'voice': self.voice,
-            'output_audio_format': self.output_audio_format,
-            'tools': OMIT if isinstance(self.tools, OmitType) else [
-                x.asPrimitive() for x in self.tools
-            ],
-            'tool_choice': self.tool_choice,
-            'temperature': self.temperature,
-            'max_output_tokens': self.max_output_tokens,
-        })
+TAG = 'OpenAI Realtime API'
 
 class Interface:
+    '''
+    - Inherit this class and override the `onServer*` handler methods.  
+      - The handlers are synchronous and should return fast.  
+    '''
     def __init__(
         self, ws: websockets.WebSocketClientProtocol, 
     ):
@@ -46,17 +27,27 @@ class Interface:
         '''
         self.ws = ws
 
+        self.closed_by_me = False
+
     @classmethod
     @asynccontextmanager
     async def Context(cls, api_key: str, model: str = MODEL):
         async with cls.__newWebSocket(api_key, model) as ws:
-            yield cls(ws)
+            interface = cls(ws)
+            try:
+                yield interface
+            finally:
+                interface.closed_by_me = True
     
     @classmethod
     async def Open(cls, api_key: str, model: str = MODEL):
         warnings.warn('Why not use Interface.Context() instead?')
         ws = await cls.__newWebSocket(api_key, model)
         return cls(ws)
+    
+    async def close(self):
+        self.closed_by_me = True
+        await self.ws.close()
     
     @staticmethod
     def __newWebSocket(api_key: str, model: str = MODEL):
@@ -73,21 +64,13 @@ class Interface:
 
     async def sessionUpdate(
         self, 
-        responseConfig: ResponseConfig, 
-        input_audio_format: str | OmitType = OMIT,
-        input_audio_transcription_model: str | None | OmitType = OMIT,
-        turn_detection: TurnDetectionConfig | None | OmitType = OMIT,
+        sessionConfig: SessionConfig, 
         event_id: str | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
             'type': f'{SESSION}.{UPDATE}',
-            'session': {
-                **responseConfig.asPrimitive(),
-                'input_audio_format': input_audio_format,
-                'input_audio_transcription_model': input_audio_transcription_model,
-                'turn_detection': turn_detection,
-            }, 
+            'session': sessionConfig.asPrimitive(), 
         }
         await self.__omitJsonSend(event)
     
@@ -169,7 +152,9 @@ class Interface:
         event = {
             'event_id': event_id,
             'type': f'{RESPONSE}.{CREATE}',
-            'response': responseConfig.asPrimitive(),
+            'response': OMIT if isinstance(
+                responseConfig, OmitType, 
+            ) else responseConfig.asPrimitive(),
         }
         await self.__omitJsonSend(event)
     
@@ -182,3 +167,46 @@ class Interface:
             'type': f'{RESPONSE}.{CANCEL}',
         }
         await self.__omitJsonSend(event)
+    
+    async def receiveLoop(self):
+        try:
+            async for message in self.ws:
+                event: tp.Dict = json.loads(message)
+                event_type = event['type']
+                event_id = event['event_id']
+                if event_type == ERROR:
+                    error = event['error']
+                    self.onServerError(
+                        event_id, 
+                        error['type'], error['code'], error['message'], 
+                        error['param'], error['event_id'],
+                    )
+                elif event_type == f'{SESSION}.{CREATED}':
+                    session: tp.Dict = event['session']
+                    session_id = session.pop('session_id')
+                    model = session.pop('model')
+                    self.onServerSessionCreated(
+                        event_id, 
+                        SessionConfig.fromPrimitive(session), 
+                        session_id, model, 
+                    )
+        except websockets.ConnectionClosed:
+            if not self.closed_by_me:
+                raise
+    
+    def onServerError(
+        self, event_id: str, 
+        error_type: str, code: str | None, message: str, 
+        param: str | None, caused_by_client_event_id: str, 
+    ):
+        print(
+            '[Error]', TAG, ':', error_type, code, ':', message, 
+            param, f'; {caused_by_client_event_id = }', 
+        )
+    
+    def onServerSessionCreated(
+        self, event_id: str, 
+        sessionConfig: SessionConfig,
+        session_id: str, model: str, 
+    ):
+        pass
