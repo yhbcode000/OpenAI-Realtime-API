@@ -57,12 +57,12 @@ class Interface:
         )
 
     async def __omitJsonSend(self, event: tp.Dict):
-        await self.ws.send(json.dumps(withoutOmits(event)))
+        await self.ws.send(json.dumps(deepWithoutOmits(event)))
 
     async def sessionUpdate(
         self, 
         sessionConfig: SessionConfig, 
-        event_id: str | OmitType = OMIT,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -72,7 +72,7 @@ class Interface:
         await self.__omitJsonSend(event)
     
     async def inputAudioBufferAppend(
-        self, audio: str, event_id: str | OmitType = OMIT,
+        self, audio: str, event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -82,7 +82,7 @@ class Interface:
         await self.__omitJsonSend(event)
     
     async def inputAudioBufferCommit(
-        self, event_id: str | OmitType = OMIT,
+        self, event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -91,7 +91,7 @@ class Interface:
         await self.__omitJsonSend(event)
     
     async def inputAudioBufferClear(
-        self, event_id: str | OmitType = OMIT,
+        self, event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -102,8 +102,8 @@ class Interface:
     async def conversationItemCreate(
         self, 
         item: ConversationItem, 
-        previous_item_id: str | OmitType = OMIT,
-        event_id: str | OmitType = OMIT,
+        previous_item_id: ItemID | OmitType = OMIT,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -115,10 +115,10 @@ class Interface:
     
     async def conversationItemTruncate(
         self, 
-        item_id: str,
+        item_id: ItemID,
         content_index: int | OmitType = OMIT,
         audio_end_ms: int | OmitType = OMIT,
-        event_id: str | OmitType = OMIT,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -131,8 +131,8 @@ class Interface:
     
     async def conversationItemDelete(
         self, 
-        item_id: str,
-        event_id: str | OmitType = OMIT,
+        item_id: ItemID,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -144,7 +144,7 @@ class Interface:
     async def responseCreate(
         self, 
         responseConfig: ResponseConfig | OmitType = OMIT, 
-        event_id: str | OmitType = OMIT,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -157,7 +157,7 @@ class Interface:
     
     async def responseCancel(
         self, 
-        event_id: str | OmitType = OMIT,
+        event_id: EventID | OmitType = OMIT,
     ):
         event = {
             'event_id': event_id,
@@ -411,7 +411,7 @@ class BaseHandler:
       - The handlers are synchronous and should return fast.  
     '''
     def onError(
-        self, event_id: str, 
+        self, event_id: EventID, 
         error: OpenAIError,
     ):
         '''
@@ -420,7 +420,7 @@ class BaseHandler:
         error.warn()
     
     def onSessionCreated(
-        self, event_id: str, 
+        self, event_id: EventID, 
         sessionConfig: SessionConfig,
         session_id: str, model: str, 
     ):
@@ -430,7 +430,7 @@ class BaseHandler:
         pass
 
     def onSessionUpdated(
-        self, event_id: str, 
+        self, event_id: EventID, 
         sessionConfig: SessionConfig,
         session_id: str, model: str, 
     ):
@@ -440,7 +440,7 @@ class BaseHandler:
         pass
     
     def onConversationCreated(
-        self, event_id: str, 
+        self, event_id: EventID, 
         conversation_id: str, 
     ):
         '''
@@ -449,8 +449,8 @@ class BaseHandler:
         pass
     
     def onConversationItemCreated(
-        self, event_id: str, 
-        previous_item_id: str, item: ConversationItem, 
+        self, event_id: EventID, 
+        previous_item_id: ItemID, item: ConversationItem, 
     ):
         '''
         Override this. 
@@ -458,8 +458,8 @@ class BaseHandler:
         pass
     
     def onConversationItemInputAudioTranscriptionCompleted(   # I blame OpenAI
-        self, event_id: str, 
-        item_id: str, content_index: int, transcript: str, 
+        self, event_id: EventID, 
+        item_id: ItemID, content_index: int, transcript: str, 
     ):
         '''
         Override this. 
@@ -467,8 +467,8 @@ class BaseHandler:
         pass
     
     def onConversationItemInputAudioTranscriptionFailed(
-        self, event_id: str, 
-        item_id: str, content_index: int, error: OpenAIError, 
+        self, event_id: EventID, 
+        item_id: ItemID, content_index: int, error: OpenAIError, 
     ):
         '''
         Override this. 
@@ -477,8 +477,8 @@ class BaseHandler:
         error.throw()
     
     def onConversationItemTruncated(
-        self, event_id: str, 
-        item_id: str, content_index: int, audio_end_ms: int, 
+        self, event_id: EventID, 
+        item_id: ItemID, content_index: int, audio_end_ms: int, 
     ):
         '''
         Override this. 
@@ -486,8 +486,8 @@ class BaseHandler:
         pass
 
     def onConversationItemDeleted(
-        self, event_id: str, 
-        item_id: str, 
+        self, event_id: EventID, 
+        item_id: ItemID, 
     ):
         '''
         Override this. 
@@ -495,8 +495,8 @@ class BaseHandler:
         pass
     
     def onInputAudioBufferCommitted(
-        self, event_id: str, 
-        previous_item_id: str, item_id: str,
+        self, event_id: EventID, 
+        previous_item_id: ItemID, item_id: ItemID,
     ):
         '''
         Override this. 
@@ -504,7 +504,7 @@ class BaseHandler:
         pass
 
     def onInputAudioBufferCleared(
-        self, event_id: str, 
+        self, event_id: EventID, 
     ):
         '''
         Override this. 
@@ -512,8 +512,8 @@ class BaseHandler:
         pass
 
     def onInputAudioBufferSpeechStarted(
-        self, event_id: str, 
-        audio_start_ms: int, item_id: str,
+        self, event_id: EventID, 
+        audio_start_ms: int, item_id: ItemID,
     ):
         '''
         Override this. 
@@ -521,8 +521,8 @@ class BaseHandler:
         pass
     
     def onInputAudioBufferSpeechStopped(
-        self, event_id: str, 
-        audio_end_ms: int, item_id: str,
+        self, event_id: EventID, 
+        audio_end_ms: int, item_id: ItemID,
     ):
         '''
         Override this. 
@@ -530,7 +530,7 @@ class BaseHandler:
         pass
 
     def onResponseCreated(
-        self, event_id: str, 
+        self, event_id: EventID, 
         response_id: str, 
     ):
         '''
@@ -539,7 +539,7 @@ class BaseHandler:
         pass
     
     def onResponseDone(
-        self, event_id: str, 
+        self, event_id: EventID, 
         response: Response, 
     ):
         '''
@@ -548,7 +548,7 @@ class BaseHandler:
         pass
 
     def onResponseOutputItemAdded(
-        self, event_id: str, 
+        self, event_id: EventID, 
         response_id: str, output_index: int, 
         item: ConversationItem, 
     ):
@@ -558,7 +558,7 @@ class BaseHandler:
         pass
 
     def onResponseOutputItemDone(
-        self, event_id: str, 
+        self, event_id: EventID, 
         response_id: str, output_index: int, 
         item: ConversationItem, 
     ):
@@ -568,8 +568,8 @@ class BaseHandler:
         pass
 
     def onResponseContentPartAdded(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
@@ -579,8 +579,8 @@ class BaseHandler:
         pass
     
     def onResponseContentPartDone(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
@@ -590,8 +590,8 @@ class BaseHandler:
         pass
     
     def onResponseTextDelta(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -601,8 +601,8 @@ class BaseHandler:
         pass
 
     def onResponseTextDone(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         text: str, 
     ):
@@ -612,8 +612,8 @@ class BaseHandler:
         pass
 
     def onResponseAudioTranscriptDelta(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -623,8 +623,8 @@ class BaseHandler:
         pass
 
     def onResponseAudioTranscriptDone(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         transcript: str, 
     ):
@@ -634,8 +634,8 @@ class BaseHandler:
         pass
 
     def onResponseAudioDelta(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -645,8 +645,8 @@ class BaseHandler:
         pass
 
     def onResponseAudioDone(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
     ):
         '''
@@ -655,8 +655,8 @@ class BaseHandler:
         pass
 
     def onResponseFunctionCallArgumentsDelta(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, delta: str, 
     ):
@@ -667,8 +667,8 @@ class BaseHandler:
         pass
 
     def onResponseFunctionCallArgumentsDone(
-        self, event_id: str, 
-        response_id: str, item_id: str,
+        self, event_id: EventID, 
+        response_id: str, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, arguments: str, 
     ):
@@ -678,7 +678,7 @@ class BaseHandler:
         pass
 
     def onRateLimitsUpdated(
-        self, event_id: str, 
+        self, event_id: EventID, 
         rateLimits: tp.List[RateLimit], 
     ):
         '''

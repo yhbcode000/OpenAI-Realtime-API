@@ -12,6 +12,9 @@ import warnings
 
 TAG = 'OpenAI Realtime API'
 
+EventID = str
+ItemID = str
+
 class OmitType: 
     _singleton = None
 
@@ -23,10 +26,15 @@ class OmitType:
 OMIT = OmitType()   # Use this to exclude a JSON key from your request.
 
 def withoutOmits(x: tp.Dict, /):
-    '''
-    Shallow.  
-    '''
     return {k: v for k, v in x.items() if v is not OMIT}
+
+def deepWithoutOmits(x: tp.Dict, /):
+    '''
+    No circular dict safegaurd.  
+    '''
+    return {k: (
+        deepWithoutOmits(v) if isinstance(v, tp.Dict) else v
+    ) for k, v in x.items() if v is not OMIT}
 
 UPDATE = 'update'
 UPDATED = 'updated'
@@ -251,7 +259,7 @@ class Property:
 
 @dataclass(frozen=True)
 class ConversationItem:
-    id_: str
+    id_: ItemID
     type_: ConversationItemType
     status: Status
     role: Role
@@ -378,7 +386,7 @@ class ResponseConfig:
     max_output_tokens: int | tp.Literal['inf'] | OmitType = OMIT
 
     def asPrimitive(self):
-        return withoutOmits({
+        return {
             'modalities': OMIT if isinstance(
                 self.modalities, OmitType, 
             ) else [str(x) for x in self.modalities],
@@ -391,7 +399,7 @@ class ResponseConfig:
             'tool_choice': self.tool_choice,
             'temperature': self.temperature,
             'max_output_tokens': self.max_output_tokens, 
-        })
+        }
 
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
@@ -461,7 +469,7 @@ class OpenAIError:
     code: str | None
     message: str
     param: str | None
-    caused_by_client_event_id: str | None
+    caused_by_client_event_id: EventID | None
 
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
