@@ -68,6 +68,9 @@ RATE_LIMITS = 'rate_limits'
 
 @contextmanager
 def MustDrain(a: tp.Dict, /):
+    '''
+    Promises to exhaust the dict by the end of the with clause.  
+    '''
     remaining = {**a}
 
     def mutate(new_dict: tp.Dict, /):
@@ -246,9 +249,6 @@ class Property:
         )
         return instance, remaining
 
-class InfType(Enum):
-    INF = 'inf'
-
 @dataclass(frozen=True)
 class ConversationItem:
     id_: str
@@ -375,7 +375,7 @@ class ResponseConfig:
     tools: tp.List[Tool] | OmitType = OMIT
     tool_choice: str | OmitType = OMIT
     temperature: float | OmitType = OMIT
-    max_output_tokens: int | InfType | OmitType = OMIT
+    max_output_tokens: int | tp.Literal['inf'] | OmitType = OMIT
 
     def asPrimitive(self):
         return withoutOmits({
@@ -390,15 +390,12 @@ class ResponseConfig:
             ],
             'tool_choice': self.tool_choice,
             'temperature': self.temperature,
-            'max_output_tokens': str(self.max_output_tokens) if isinstance(
-                self.max_output_tokens, InfType,
-            ) else self.max_output_tokens, 
+            'max_output_tokens': self.max_output_tokens, 
         })
 
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
         remaining = {**a}
-        max_output_tokens = remaining.pop('max_output_tokens')
         tools = []
         for x in remaining.pop('tools'):
             with MustDrain(x) as (tool_primitive, mutate):
@@ -413,9 +410,7 @@ class ResponseConfig:
             tools,
             remaining.pop('tool_choice'), 
             remaining.pop('temperature'), 
-            max_output_tokens if isinstance(
-                max_output_tokens, int, 
-            ) else InfType(max_output_tokens),
+            remaining.pop('max_output_tokens'), 
         )
         return instance, remaining
 

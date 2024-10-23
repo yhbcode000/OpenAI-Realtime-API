@@ -1,46 +1,46 @@
+from __future__ import annotations
+
 import typing as tp
 from contextlib import asynccontextmanager
 import json
 import warnings
 import websockets
 
-from shared import *
+from .shared import *
 
 MODEL = 'gpt-4o-realtime-preview-2024-10-01'    # The only available model at this time. When Realtime API leaves beta, there will prolly be a way to point to a stable one.
 
 ENDPOINT = 'wss://api.openai.com/v1/realtime'
 
 class Interface:
-    '''
-    - Inherit this class and override the `onServer*` handler methods.  
-      - The handlers are synchronous and should return fast.  
-    '''
     def __init__(
         self, ws: websockets.WebSocketClientProtocol, 
+        handler: BaseHandler,
     ):
         '''
         Don't use this constructor directly. Use `with Interface.Context(...) as interface:` instead.  
         If you are in a hurry, it's also ok to `Interface.Open(...)`.  
         '''
         self.ws = ws
+        self.handler = handler
 
         self.closed_by_me = False
 
     @classmethod
     @asynccontextmanager
-    async def Context(cls, api_key: str, model: str = MODEL):
+    async def Context(cls, api_key: str, handler: BaseHandler, model: str = MODEL):
         async with cls.__newWebSocket(api_key, model) as ws:
-            interface = cls(ws)
+            interface = cls(ws, handler)
             try:
                 yield interface
             finally:
                 interface.closed_by_me = True
     
     @classmethod
-    async def Open(cls, api_key: str, model: str = MODEL):
+    async def Open(cls, api_key: str, handler: BaseHandler, model: str = MODEL):
         warnings.warn('Why not use Interface.Context() instead?')
         ws = await cls.__newWebSocket(api_key, model)
-        return cls(ws)
+        return cls(ws, handler)
     
     async def close(self):
         self.closed_by_me = True
@@ -169,12 +169,12 @@ class Interface:
         try:
             async for message in self.ws:
                 event: tp.Dict = json.loads(message)
-                await self.onServerEvent(event)
+                await self.parseEvent(event)
         except websockets.ConnectionClosed:
             if not self.closed_by_me:
                 raise
 
-    async def onServerEvent(self, event: tp.Dict):
+    async def parseEvent(self, event: tp.Dict):
         with MustDrain(event) as (e, mutateE):
             event_type: str = e.pop('type')
             event_id = e.pop('event_id')
@@ -182,7 +182,7 @@ class Interface:
                 with MustDrain(e.pop('error')) as (error_primitive, mutateErr):
                     error, r = OpenAIError.fromPrimitive(error_primitive)
                     mutateErr(r)
-                self.onServerError(
+                self.handler.onError(
                     event_id, error, 
                 )
             elif event_type in (
@@ -196,13 +196,13 @@ class Interface:
                     sessionConfig, r = SessionConfig.fromPrimitive(session_primitive)
                     mutateSession(r)
                     if event_type == f'{SESSION}.{CREATED}':
-                        self.onServerSessionCreated(
+                        self.handler.onSessionCreated(
                             event_id, 
                             sessionConfig, 
                             session_id, model, 
                         )
                     else:
-                        self.onServerSessionUpdated(
+                        self.handler.onSessionUpdated(
                             event_id, 
                             sessionConfig, 
                             session_id, model, 
@@ -210,7 +210,7 @@ class Interface:
             elif event_type == f'{CONVERSATION}.{CREATED}':
                 with MustDrain(e.pop('conversation')) as (conversation, _):
                     assert conversation.pop('object') == f'{REALTIME}.{CONVERSATION}'
-                    self.onServerConversationCreated(
+                    self.handler.onConversationCreated(
                             event_id, conversation.pop('id'), 
                         )
             elif event_type == f'{CONVERSATION}.{ITEM}.{CREATED}':
@@ -218,13 +218,13 @@ class Interface:
                     assert item_primitive.pop('object') == f'{REALTIME}.{ITEM}'
                     conversationItem, r = ConversationItem.fromPrimitive(item_primitive)
                     mutateItem(r)
-                self.onServerConversationItemCreated(
+                self.handler.onConversationItemCreated(
                     event_id, 
                     e.pop('previous_item_id'), 
                     conversationItem, 
                 )
             elif event_type == f'{CONVERSATION}.{ITEM}.{INPUT_AUDIO_TRANSCRIPTION}.{COMPLETED}':
-                self.onServerConversationItemInputAudioTranscriptionCompleted(
+                self.handler.onConversationItemInputAudioTranscriptionCompleted(
                     event_id, 
                     e.pop('item_id'), 
                     e.pop('content_index'), 
@@ -234,42 +234,42 @@ class Interface:
                 with MustDrain(e.pop('error')) as (error_primitive, mutateErr):
                     error, r = OpenAIError.fromPrimitive(error_primitive)
                     mutateErr(r)
-                self.onServerConversationItemInputAudioTranscriptionFailed(
+                self.handler.onConversationItemInputAudioTranscriptionFailed(
                     event_id, 
                     e.pop('item_id'), 
                     e.pop('content_index'), 
                     error, 
                 )
             elif event_type == f'{CONVERSATION}.{ITEM}.{TRUNCATED}':
-                self.onServerConversationItemTruncated(
+                self.handler.onConversationItemTruncated(
                     event_id, 
                     e.pop('item_id'), 
                     e.pop('content_index'), 
                     e.pop('audio_end_ms'), 
                 )
             elif event_type == f'{CONVERSATION}.{ITEM}.{DELETED}':
-                self.onServerConversationItemDeleted(
+                self.handler.onConversationItemDeleted(
                     event_id, 
                     e.pop('item_id'), 
                 )
             elif event_type == f'{INPUT_AUDIO_BUFFER}.{COMMITTED}':
-                self.onServerInputAudioBufferCommitted(
+                self.handler.onInputAudioBufferCommitted(
                     event_id, 
                     e.pop('previous_item_id'), 
                     e.pop('item_id'), 
                 )
             elif event_type == f'{INPUT_AUDIO_BUFFER}.{CLEARED}':
-                self.onServerInputAudioBufferCleared(
+                self.handler.onInputAudioBufferCleared(
                     event_id, 
                 )
             elif event_type == f'{INPUT_AUDIO_BUFFER}.{SPEECH_STARTED}':
-                self.onServerInputAudioBufferSpeechStarted(
+                self.handler.onInputAudioBufferSpeechStarted(
                     event_id, 
                     e.pop('audio_start_ms'), 
                     e.pop('item_id'), 
                 )
             elif event_type == f'{INPUT_AUDIO_BUFFER}.{SPEECH_STOPPED}':
-                self.onServerInputAudioBufferSpeechStopped(
+                self.handler.onInputAudioBufferSpeechStopped(
                     event_id, 
                     e.pop('audio_end_ms'), 
                     e.pop('item_id'), 
@@ -283,7 +283,7 @@ class Interface:
                     response.pop('status_details', None)
                     response.pop('output', None)
                     response.pop('usage', None)
-                self.onServerResponseCreated(
+                self.handler.onResponseCreated(
                     event_id, 
                     response_id, 
                 )
@@ -291,7 +291,7 @@ class Interface:
                 with MustDrain(e.pop('response')) as (response_primitive, mutateResponse):
                     response, r = Response.fromPrimitive(response_primitive)
                     mutateResponse(r)
-                self.onServerResponseDone(
+                self.handler.onResponseDone(
                     event_id, 
                     response,
                 )
@@ -306,12 +306,12 @@ class Interface:
                 response_id = e.pop('response_id')
                 output_index = e.pop('output_index')
                 if event_type == f'{RESPONSE}.{OUTPUT_ITEM}.{ADDED}':
-                    self.onServerResponseOutputItemAdded(
+                    self.handler.onResponseOutputItemAdded(
                         event_id, 
                         response_id, output_index, conversationItem, 
                     )
                 else:
-                    self.onServerResponseOutputItemDone(
+                    self.handler.onResponseOutputItemDone(
                         event_id, 
                         response_id, output_index, conversationItem, 
                     )
@@ -328,13 +328,13 @@ class Interface:
                 output_index = e.pop('output_index')
                 content_index = e.pop('content_index')
                 if event_type == f'{RESPONSE}.{CONTENT_PART}.{ADDED}':
-                    self.onServerResponseContentPartAdded(
+                    self.handler.onResponseContentPartAdded(
                         event_id, 
                         response_id, item_id, output_index, 
                         content_index, contentPart, 
                     )
                 else:
-                    self.onServerResponseContentPartDone(
+                    self.handler.onResponseContentPartDone(
                         event_id, 
                         response_id, item_id, output_index, 
                         content_index, contentPart, 
@@ -348,42 +348,42 @@ class Interface:
                     'content_index': e.pop('content_index'),
                 }
                 if event_type == f'{RESPONSE}.{TEXT}.{DELTA}':
-                    self.onServerResponseTextDelta(
+                    self.handler.onResponseTextDelta(
                         **kw, 
                         delta=e.pop('delta'), 
                     )
                 elif event_type == f'{RESPONSE}.{TEXT}.{DONE}':
-                    self.onServerResponseTextDone(
+                    self.handler.onResponseTextDone(
                         **kw, 
                         text=e.pop('text'), 
                     )
                 elif event_type == f'{RESPONSE}.{AUDIO_TRANSCRIPT}.{DELTA}':
-                    self.onServerResponseAudioTranscriptDelta(
+                    self.handler.onResponseAudioTranscriptDelta(
                         **kw, 
                         delta=e.pop('delta'), 
                     )
                 elif event_type == f'{RESPONSE}.{AUDIO_TRANSCRIPT}.{DONE}':
-                    self.onServerResponseAudioTranscriptDone(
+                    self.handler.onResponseAudioTranscriptDone(
                         **kw,
                         transcript=e.pop('transcript'),
                     )
                 elif event_type == f'{RESPONSE}.{AUDIO}.{DELTA}':
-                    self.onServerResponseAudioDelta(
+                    self.handler.onResponseAudioDelta(
                         **kw, 
                         delta=e.pop('delta'), 
                     )
                 elif event_type == f'{RESPONSE}.{AUDIO}.{DONE}':
-                    self.onServerResponseAudioDone(
+                    self.handler.onResponseAudioDone(
                         **kw, 
                     )
                 elif event_type == f'{RESPONSE}.{FUNCTION_CALL_ARGUMENTS}.{DELTA}':
-                    self.onServerResponseFunctionCallArgumentsDelta(
+                    self.handler.onResponseFunctionCallArgumentsDelta(
                         **kw, 
                         call_id=e.pop('call_id'), 
                         delta=e.pop('delta'), 
                     )
                 elif event_type == f'{RESPONSE}.{FUNCTION_CALL_ARGUMENTS}.{DONE}':
-                    self.onServerResponseFunctionCallArgumentsDone(
+                    self.handler.onResponseFunctionCallArgumentsDone(
                         **kw, 
                         call_id=e.pop('call_id'), 
                         arguments=e.pop('arguments'), 
@@ -398,14 +398,19 @@ class Interface:
                         rateLimit, r = RateLimit.fromPrimitive(rlp)
                         rateLimits.append(rateLimit)
                         mutateRLP(r)
-                self.onServerRateLimitsUpdated(
+                self.handler.onRateLimitsUpdated(
                     event_id, 
                     rateLimits, 
                 )
             else:
                 raise ValueError(event_type)
-    
-    def onServerError(
+
+class BaseHandler:
+    '''
+    - Inherit this class and override the methods.  
+      - The handlers are synchronous and should return fast.  
+    '''
+    def onError(
         self, event_id: str, 
         error: OpenAIError,
     ):
@@ -414,7 +419,7 @@ class Interface:
         '''
         error.warn()
     
-    def onServerSessionCreated(
+    def onSessionCreated(
         self, event_id: str, 
         sessionConfig: SessionConfig,
         session_id: str, model: str, 
@@ -424,7 +429,7 @@ class Interface:
         '''
         pass
 
-    def onServerSessionUpdated(
+    def onSessionUpdated(
         self, event_id: str, 
         sessionConfig: SessionConfig,
         session_id: str, model: str, 
@@ -434,7 +439,7 @@ class Interface:
         '''
         pass
     
-    def onServerConversationCreated(
+    def onConversationCreated(
         self, event_id: str, 
         conversation_id: str, 
     ):
@@ -443,7 +448,7 @@ class Interface:
         '''
         pass
     
-    def onServerConversationItemCreated(
+    def onConversationItemCreated(
         self, event_id: str, 
         previous_item_id: str, item: ConversationItem, 
     ):
@@ -452,7 +457,7 @@ class Interface:
         '''
         pass
     
-    def onServerConversationItemInputAudioTranscriptionCompleted(   # I blame OpenAI
+    def onConversationItemInputAudioTranscriptionCompleted(   # I blame OpenAI
         self, event_id: str, 
         item_id: str, content_index: int, transcript: str, 
     ):
@@ -461,7 +466,7 @@ class Interface:
         '''
         pass
     
-    def onServerConversationItemInputAudioTranscriptionFailed(
+    def onConversationItemInputAudioTranscriptionFailed(
         self, event_id: str, 
         item_id: str, content_index: int, error: OpenAIError, 
     ):
@@ -471,7 +476,7 @@ class Interface:
         # If you overrided `...TranscriptionCompleted()`, you should override this too. Hence the default fatal exception.  
         error.throw()
     
-    def onServerConversationItemTruncated(
+    def onConversationItemTruncated(
         self, event_id: str, 
         item_id: str, content_index: int, audio_end_ms: int, 
     ):
@@ -480,7 +485,7 @@ class Interface:
         '''
         pass
 
-    def onServerConversationItemDeleted(
+    def onConversationItemDeleted(
         self, event_id: str, 
         item_id: str, 
     ):
@@ -489,7 +494,7 @@ class Interface:
         '''
         pass
     
-    def onServerInputAudioBufferCommitted(
+    def onInputAudioBufferCommitted(
         self, event_id: str, 
         previous_item_id: str, item_id: str,
     ):
@@ -498,7 +503,7 @@ class Interface:
         '''
         pass
 
-    def onServerInputAudioBufferCleared(
+    def onInputAudioBufferCleared(
         self, event_id: str, 
     ):
         '''
@@ -506,7 +511,7 @@ class Interface:
         '''
         pass
 
-    def onServerInputAudioBufferSpeechStarted(
+    def onInputAudioBufferSpeechStarted(
         self, event_id: str, 
         audio_start_ms: int, item_id: str,
     ):
@@ -515,7 +520,7 @@ class Interface:
         '''
         pass
     
-    def onServerInputAudioBufferSpeechStopped(
+    def onInputAudioBufferSpeechStopped(
         self, event_id: str, 
         audio_end_ms: int, item_id: str,
     ):
@@ -524,7 +529,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseCreated(
+    def onResponseCreated(
         self, event_id: str, 
         response_id: str, 
     ):
@@ -533,7 +538,7 @@ class Interface:
         '''
         pass
     
-    def onServerResponseDone(
+    def onResponseDone(
         self, event_id: str, 
         response: Response, 
     ):
@@ -542,7 +547,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseOutputItemAdded(
+    def onResponseOutputItemAdded(
         self, event_id: str, 
         response_id: str, output_index: int, 
         item: ConversationItem, 
@@ -552,7 +557,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseOutputItemDone(
+    def onResponseOutputItemDone(
         self, event_id: str, 
         response_id: str, output_index: int, 
         item: ConversationItem, 
@@ -562,7 +567,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseContentPartAdded(
+    def onResponseContentPartAdded(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -573,7 +578,7 @@ class Interface:
         '''
         pass
     
-    def onServerResponseContentPartDone(
+    def onResponseContentPartDone(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -584,7 +589,7 @@ class Interface:
         '''
         pass
     
-    def onServerResponseTextDelta(
+    def onResponseTextDelta(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -595,7 +600,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseTextDone(
+    def onResponseTextDone(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -606,7 +611,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseAudioTranscriptDelta(
+    def onResponseAudioTranscriptDelta(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -617,7 +622,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseAudioTranscriptDone(
+    def onResponseAudioTranscriptDone(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -628,7 +633,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseAudioDelta(
+    def onResponseAudioDelta(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -639,7 +644,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseAudioDone(
+    def onResponseAudioDone(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -649,7 +654,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseFunctionCallArgumentsDelta(
+    def onResponseFunctionCallArgumentsDelta(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -661,7 +666,7 @@ class Interface:
         '''
         pass
 
-    def onServerResponseFunctionCallArgumentsDone(
+    def onResponseFunctionCallArgumentsDone(
         self, event_id: str, 
         response_id: str, item_id: str,
         output_index: int, content_index: int, 
@@ -672,7 +677,7 @@ class Interface:
         '''
         pass
 
-    def onServerRateLimitsUpdated(
+    def onRateLimitsUpdated(
         self, event_id: str, 
         rateLimits: tp.List[RateLimit], 
     ):
