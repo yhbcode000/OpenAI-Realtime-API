@@ -28,6 +28,7 @@ class Client(BaseHandler):
             ), 
             OMIT, OMIT, OMIT, 
         )
+        self.items: tp.Dict[ItemID, ConversationItem] = {}
         self.server_conversation = Conversation()
         self.server_responses: tp.Dict[ResponseID, Response] = {}
         
@@ -95,10 +96,12 @@ class Client(BaseHandler):
     
     def updateServerSessionConfig(self, sessionConfig: SessionConfig):
         if sessionConfig != self.server_sessionConfig:
-            new = deepWithoutOmits(sessionConfig.asPrimitive())
+            new = deepWithoutOmits(sessionConfig            .asPrimitive())
             old = deepWithoutOmits(self.server_sessionConfig.asPrimitive())
-            with MustDrain(deepUpdate(old, new)) as (updated, mutate):
-                self.server_sessionConfig, r = SessionConfig.fromPrimitive(updated)
+            updated = deepUpdate(old, new)
+            assert isinstance(updated, dict)
+            with MustDrain(updated) as (u, mutate):
+                self.server_sessionConfig, r = SessionConfig.fromPrimitive(u)
                 mutate(r)
     
     @log
@@ -129,21 +132,25 @@ class Client(BaseHandler):
         self, event_id: EventID, 
         previous_item_id: ItemID, item: ConversationItem, 
     ):
-        self.server_conversation.insertAfter(item, previous_item_id)
+        assert item.id_ not in self.items
+        self.items[item.id_] = item
+        self.server_conversation.insertAfter(item.id_, previous_item_id)
     
     @log
     def onConversationItemInputAudioTranscriptionCompleted(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, transcript: str, 
     ):
-        content = self.server_conversation.cells[item_id].item.content
-        old_part = content[content_index]
+        old_part = self.items[item_id].content[content_index]
         assert old_part.transcript is None
-        content[content_index] = ContentPart(
+        new_part = ContentPart(
             old_part.type_, 
             old_part.text, 
             old_part.audio, 
             transcript, 
+        )
+        self.items[item_id] = self.items[item_id].withUpdatedContentPart(
+            content_index, new_part, 
         )
     
     @log
@@ -176,13 +183,7 @@ class Client(BaseHandler):
         self, event_id: EventID, 
         previous_item_id: ItemID, item_id: ItemID,
     ):
-        self.server_conversation.insertAfter(ConversationItem(
-            item_id, ConversationItemType.MESSAGE, 
-            Status.COMPLETED, Role.USER, [ContentPart(
-                ContentPartType.INPUT_AUDIO, 
-                None, NOT_HERE, None, 
-            )], 
-        ), previous_item_id)
+        self.server_conversation.insertAfter(item_id, previous_item_id)
 
     @log
     def onInputAudioBufferCleared(
@@ -210,15 +211,20 @@ class Client(BaseHandler):
         response_id: ResponseID, 
     ):
         self.server_responses[response_id] = Response(
-            response_id, Status.IN_PROGRESS, None, [], None, 
+            response_id, Status.IN_PROGRESS, None, (), None, 
         )
     
     @log
     def onResponseDone(
         self, event_id: EventID, 
-        response: Response, 
+        response: Response, items: tp.Tuple[ConversationItem, ...], 
     ):
         self.server_responses[response.id_] = response
+        for theirs in items:
+            mine = self.items[theirs.id_]
+            pM = deepWithout((None, OMIT, NOT_HERE), mine  .asPrimitive())
+            pT = deepWithout((None, OMIT, NOT_HERE), theirs.asPrimitive())
+            assert deepUpdate(pM, pT) == pM
 
     @log
     def onResponseOutputItemAdded(
@@ -226,9 +232,17 @@ class Client(BaseHandler):
         response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
-        output = self.server_responses[response_id].output
-        assert len(output) == output_index
-        output.append(item)
+        old_response = self.server_responses[response_id]
+        assert len(old_response.output) == output_index
+        self.server_responses[response_id] = Response(
+            old_response.id_,
+            old_response.status,
+            old_response.status_details,
+            old_response.output + (item.id_, ),
+            old_response.usage,
+        )
+        assert item.id_ not in self.items
+        self.items[item.id_] = item
 
     @log
     def onResponseOutputItemDone(
@@ -236,8 +250,19 @@ class Client(BaseHandler):
         response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
-        output = self.server_responses[response_id].output
-        output[output_index] = item
+        assert self.server_responses[response_id].output[output_index] == item.id_
+        self.items[item.id_] = item
+
+    def updateContentPart(
+        self, 
+        response_id: ResponseID, item_id: ItemID,
+        output_index: int, content_index: int, 
+        part: ContentPart, 
+    ):
+        assert self.server_responses[response_id].output[output_index] == item_id
+        self.items[item_id] = self.items[
+            item_id
+        ].withUpdatedContentPart(content_index, part)
 
     @log
     def onResponseContentPartAdded(
@@ -246,12 +271,9 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
-        output = self.server_responses[response_id].output
-        item = output[output_index]
-        assert item.id_ == item_id
-        content = item.content
-        assert len(content) == content_index
-        content.append(part)
+        self.updateContentPart(
+            response_id, item_id, output_index, content_index, part,
+        )
     
     @log
     def onResponseContentPartDone(
@@ -260,10 +282,9 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.updateContentPart(
+            response_id, item_id, output_index, content_index, part,
+        )
     
     @log
     def onResponseTextDelta(
@@ -364,25 +385,56 @@ class Client(BaseHandler):
     @log
     def onRateLimitsUpdated(
         self, event_id: EventID, 
-        rateLimits: tp.List[RateLimit], 
+        rateLimits: tp.Tuple[RateLimit, ...], 
     ):
         '''
         Override this. 
         '''
         pass
 
-def deepUpdate(old: dict, new: dict, /):
+def deepUpdate(
+    old: dict | tuple | list, 
+    new: dict | tuple | list, 
+/):
     '''
-    No circular dict safegaurd.  
+    No circular safegaurd.  
     '''
-    c = {**old}
-    for k, v in new.items():
-        if (
-            isinstance(v, dict) and 
-            k in c and 
-            isinstance(c[k], dict)
-        ):
-            c[k] = deepUpdate(c[k], v)
-        else:
-            c[k] = v
-    return {k: v for k, v in old.items()}
+    if (
+        isinstance(old, dict) and 
+        isinstance(new, dict)
+    ):
+        d = {**old}
+        for k, v in new.items():
+            if k in d and (
+                isinstance(v, dict) or 
+                isinstance(v, tuple) or 
+                isinstance(v, list)
+            ):
+                d[k] = deepUpdate(d[k], v)
+            else:
+                d[k] = v
+        return d
+    if (
+        isinstance(old, list) and 
+        isinstance(new, list)
+    ):
+        l = []
+        for i, v in enumerate(new):
+            if i < len(old):
+                if (
+                    isinstance(v, dict) or 
+                    isinstance(v, tuple) or 
+                    isinstance(v, list)
+                ):
+                    l.append(deepUpdate(old[i], v))
+                else:
+                    l.append(v)
+            else:
+                l.append(v)
+        return l
+    if (
+        isinstance(old, tuple) and 
+        isinstance(new, tuple)
+    ):
+        return tuple(deepUpdate(list(old), list(new)))
+    raise TypeError(f'{old = }, {new = }')

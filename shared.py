@@ -9,6 +9,7 @@ from enum import Enum
 from dataclasses import dataclass
 from contextlib import contextmanager
 import warnings
+from functools import partial
 
 TAG = 'OpenAI Realtime API'
 
@@ -46,13 +47,43 @@ NOT_HERE = NotHereType()
 def withoutOmits(x: tp.Dict, /):
     return {k: v for k, v in x.items() if v is not OMIT}
 
-def deepWithoutOmits(x: tp.Dict, /):
+def deepWithout(
+    allergens: tp.Any, 
+    patient: tp.Dict | tp.Tuple | tp.List, /
+):
     '''
-    No circular dict safegaurd.  
+    No circular safegaurd.  
     '''
-    return {k: (
-        deepWithoutOmits(v) if isinstance(v, tp.Dict) else v
-    ) for k, v in x.items() if v is not OMIT}
+    if isinstance(patient, tp.Dict):
+        d = {}
+        for k, v in patient.items():
+            if v in allergens:
+                continue
+            if (
+                isinstance(v, tp.Dict) or 
+                isinstance(v, tp.Tuple) or
+                isinstance(v, tp.List)
+            ):
+                d[k] = deepWithout(allergens, v)
+            else:
+                d[k] = v
+        return d
+    l = []
+    for v in patient:
+        if v in allergens:
+            continue
+        if (
+            isinstance(v, tp.Dict) or 
+            isinstance(v, tp.Tuple) or
+            isinstance(v, tp.List)
+        ):
+            l.append(deepWithout(allergens, v))
+        else:
+            l.append(v)
+    return type(patient)(l)
+
+deepWithoutOmits = partial(deepWithout, (OMIT, ))
+deepWithoutNone  = partial(deepWithout, (None, ))
 
 UPDATE = 'update'
 UPDATED = 'updated'
@@ -227,8 +258,8 @@ class Function:
 @dataclass(frozen=True)
 class Parameters:
     type_: str
-    properties: tp.Dict[str, Property]
-    required: tp.List[str]
+    properties: tp.Dict[str, Property]  # not frozen. Behave. 
+    required: tp.Tuple[str, ...]
     additionalProperties: bool
 
     def asPrimitive(self):
@@ -250,7 +281,7 @@ class Parameters:
         instance = __class__(
             remaining.pop('type'),
             properties,
-            remaining.pop('required'),
+            tuple(remaining.pop('required')),
             remaining.pop('additionalProperties'),
         )
         return instance, remaining
@@ -281,7 +312,7 @@ class ConversationItem:
     type_: ConversationItemType
     status: Status
     role: Role
-    content: tp.List[ContentPart]
+    content: tp.Tuple[ContentPart, ...]
     call_id: str | None = None
     name: str | None = None
     arguments: str | None = None
@@ -328,13 +359,34 @@ class ConversationItem:
             ConversationItemType(remaining.pop('type')),
             Status              (remaining.pop('status')),
             Role                (remaining.pop('role')),
-            content,
+            tuple(content),
             remaining.pop('call_id', None),
             remaining.pop('name', None),
             remaining.pop('arguments', None),
             remaining.pop('output', None),
         )
         return instance, remaining
+    
+    def withUpdatedContentPart(self, content_index: int, new_part: ContentPart):
+        if content_index < len(self.content):
+            new_content = tuple((
+                new_part if i == content_index else old
+            ) for i, old in enumerate(self.content))
+        elif content_index == len(self.content):
+            new_content = self.content + (new_part, )
+        else:
+            raise IndexError(f'{content_index = } not in {len(self.content) = }')
+        return ConversationItem(
+            self.id_, 
+            self.type_, 
+            self.status, 
+            self.role, 
+            new_content, 
+            self.call_id, 
+            self.name, 
+            self.arguments, 
+            self.output, 
+        )
 
 class ConversationItemType(Enum):
     MESSAGE = 'message'
@@ -402,11 +454,11 @@ class ContentPartType(Enum):
 
 @dataclass(frozen=True)
 class ResponseConfig:
-    modalities: tp.List[Modality] | OmitType = OMIT
+    modalities: tp.Tuple[Modality, ...] | OmitType = OMIT
     instructions: str | OmitType = OMIT
     voice: str | OmitType = OMIT
     output_audio_format: str | OmitType = OMIT
-    tools: tp.List[Tool] | OmitType = OMIT
+    tools: tp.Tuple[Tool, ...] | OmitType = OMIT
     tool_choice: str | OmitType = OMIT
     temperature: float | OmitType = OMIT
     max_output_tokens: int | tp.Literal['inf'] | OmitType = OMIT
@@ -437,11 +489,11 @@ class ResponseConfig:
                 tools.append(tool)
                 mutate(r)
         instance = __class__(
-            [Modality(x) for x in remaining.pop('modalities')], 
+            tuple(Modality(x) for x in remaining.pop('modalities')), 
             remaining.pop('instructions'), 
             remaining.pop('voice'), 
             remaining.pop('output_audio_format'), 
-            tools,
+            tuple(tools),
             remaining.pop('tool_choice'), 
             remaining.pop('temperature'), 
             remaining.pop('max_output_tokens'), 
@@ -527,14 +579,14 @@ class Response:
     id_: ResponseID
     status: Status
     status_details: tp.Dict | None
-    output: tp.List[ConversationItem]
+    output: tp.Tuple[ItemID, ...]   # this differs from OpenAI's docs. The API response contains the entire item object. We use the ID here because all items live in the same global namespace.
     usage: tp.Dict | None
     # known keys of `usage`, undocumented: 'total_tokens', 'input_tokens', 'output_tokens'
 
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
         remaining = {**a}
-        output = []
+        output: tp.List[ConversationItem] = []
         for x in remaining.pop('output'):
             with MustDrain(x) as (conversation_item_primitive, mutate):
                 conversationItem, r = ConversationItem.fromPrimitive(conversation_item_primitive)
@@ -544,10 +596,10 @@ class Response:
             remaining.pop('id'),
             Status(remaining.pop('status')),
             remaining.pop('status_details', None),
-            output,
+            tuple(x.id_ for x in output),
             remaining.pop('usage', None),
         )
-        return instance, remaining
+        return instance, tuple(output), remaining
 
 @dataclass(frozen=True)
 class RateLimit:

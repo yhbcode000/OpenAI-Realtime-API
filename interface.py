@@ -294,11 +294,12 @@ class Interface:
                 )
             elif event_type == f'{RESPONSE}.{DONE}':
                 with MustDrain(e.pop('response')) as (response_primitive, mutateResponse):
-                    response, r = Response.fromPrimitive(response_primitive)
+                    response, items, r = Response.fromPrimitive(response_primitive)
                     mutateResponse(r)
                 self.handler.onResponseDone(
                     event_id, 
                     response,
+                    items, 
                 )
             elif event_type in (
                 f'{RESPONSE}.{OUTPUT_ITEM}.{ADDED}', 
@@ -405,7 +406,7 @@ class Interface:
                         mutateRLP(r)
                 self.handler.onRateLimitsUpdated(
                     event_id, 
-                    rateLimits, 
+                    tuple(rateLimits), 
                 )
             else:
                 raise ValueError(event_type)
@@ -545,7 +546,7 @@ class BaseHandler:
     
     def onResponseDone(
         self, event_id: EventID, 
-        response: Response, 
+        response: Response, items: tp.Tuple[ConversationItem, ...],
     ):
         '''
         Override this. 
@@ -684,7 +685,7 @@ class BaseHandler:
 
     def onRateLimitsUpdated(
         self, event_id: EventID, 
-        rateLimits: tp.List[RateLimit], 
+        rateLimits: tp.Tuple[RateLimit, ...], 
     ):
         '''
         Override this. 
