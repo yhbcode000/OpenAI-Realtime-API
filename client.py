@@ -9,9 +9,6 @@ from .interface import Interface, BaseHandler, MODEL
 from openai_realtime_api import defaults
 from .conversation import Conversation
 
-SEND_TIME = 'send_time'
-UNACKED_CLIENT_EVENT_ABNORMAL_TIME = 3.0 # sec
-
 class Client(BaseHandler):
     def __init__(self, interface: Interface):
         '''
@@ -19,13 +16,11 @@ class Client(BaseHandler):
         If you are in a hurry, it's also ok to `Client.Open(...)`.  
         '''
         self.interface = interface
-        interface.sendMiddleware = self.sendMiddleware
 
         self.lock = asyncio.Lock()
 
         # A shallow copy of all server events we received.  
         self.server_event_log: tp.Dict[EventID, tp.Dict[str, tp.Any]] = {}
-        self.client_events_unacknowledged: tp.Dict[EventID, tp.Dict[str, tp.Any]] = {}
 
         self.server_sessionConfig: SessionConfig = SessionConfig(
             ResponseConfig(
@@ -69,30 +64,8 @@ class Client(BaseHandler):
         self.cleanup()
     
     def cleanup(self):
-        abnormal_unacked_client_events = []
-        for v in self.client_events_unacknowledged.values():
-            if time.time() - v[SEND_TIME] > UNACKED_CLIENT_EVENT_ABNORMAL_TIME:
-                abnormal_unacked_client_events.append(v)
-        if abnormal_unacked_client_events:
-            print(f'The following client events are not acknowledged by the server for over {UNACKED_CLIENT_EVENT_ABNORMAL_TIME} seconds:')
-            print('', *abnormal_unacked_client_events, sep='\n    ')
-            raise RuntimeError('Abnormal unacknowledged client events.')
+        pass    # no cleanup needed yet
 
-    def sendMiddleware(self, payload: tp.Dict[str, tp.Any]):
-        if payload['type'] in (
-            f'{SESSION}.{UPDATE}',
-            f'{INPUT_AUDIO_BUFFER}.{COMMIT}', 
-            f'{INPUT_AUDIO_BUFFER}.{CLEAR}',
-            f'{CONVERSATION}.{ITEM}.{CREATE}',
-            f'{CONVERSATION}.{ITEM}.{TRUNCATE}',
-            f'{CONVERSATION}.{ITEM}.{DELETE}',
-            f'{RESPONSE}.{CREATE}',
-        ):
-            self.client_events_unacknowledged[
-                payload['event_id']
-            ] = {**payload, SEND_TIME: time.time()}
-        return payload
-    
     def nextEventId(self) -> EventID:
         return f'ibc_{next(self.eventIdCount) : 04d}'
         # [i]nitiated [b]y [c]lient
@@ -106,11 +79,8 @@ class Client(BaseHandler):
                 assert k not in kw
                 kw[k] = v
             event_id = kw['event_id']
-            # >>> critical section. No need to lock because we are not `await`ing.
             assert event_id not in self.server_event_log
             self.server_event_log[event_id] = kw
-            self.client_events_unacknowledged.pop(event_id, None)
-            # <<<
             return result
         return wrapper
     
