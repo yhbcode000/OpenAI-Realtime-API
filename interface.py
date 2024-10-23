@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as tp
+import asyncio
 from contextlib import asynccontextmanager
 import json
 import warnings
@@ -178,6 +179,8 @@ class Interface:
         except websockets.ConnectionClosed:
             if not self.closed_by_me:
                 raise
+        except asyncio.CancelledError:
+            pass
 
     async def parseEvent(self, event: tp.Dict):
         with MustDrain(event) as (e, mutateE):

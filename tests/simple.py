@@ -20,7 +20,10 @@ class MyClient(openai_realtime_api.Client):
     
     async def keepLoggingSnapshots(self):
         while True:
-            await asyncio.sleep(1)
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
             self.logSnapshot()
 
     def onError(
