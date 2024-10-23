@@ -318,6 +318,20 @@ class ConversationItem:
     arguments: str | None = None
     output: str | None = None
 
+    def __repr__(self):
+        lines: tp.List[str] = [f'item {self.id_}:']
+        lines.append(str(self.type_))
+        lines.append(str(self.role))
+        lines.append(str(self.status))
+        lines.append(str(self.content))
+        if self.name is not None:
+            lines.append(self.name)
+        if self.arguments is not None:
+            lines.append(self.arguments)
+        if self.output is not None:
+            lines.append(self.output)
+        return '\n  '.join(lines)
+
     def __post_init__(self):
         assert (
             self.type_ == ConversationItemType.FUNCTION_CALL
@@ -411,6 +425,21 @@ class ContentPart:
     audio: str | NotHereType | None = None
     transcript: str | None = None
 
+    def __repr__(self):
+        if self.type_ in (ContentPartType.TEXT, ContentPartType.INPUT_TEXT):
+            body = self.text
+        elif self.type_ in (ContentPartType.AUDIO, ContentPartType.INPUT_AUDIO):
+            if isinstance(self.audio, NotHereType):
+                body = 'audio=NOT_HERE'
+            else:
+                assert self.audio is not None
+                body = f'audio ({len(self.audio) // 1024} KB)'
+            if self.transcript is not None:
+                body += f' transcript="{self.transcript}"'
+        else:
+            raise ValueError(self.type_)
+        return f'<{self.type_}: {body}>'
+
     def __post_init__(self):
         assert (
             self.type_ in (ContentPartType.TEXT, ContentPartType.INPUT_TEXT)
@@ -456,7 +485,7 @@ class ContentPartType(Enum):
 class ResponseConfig:
     modalities: tp.Tuple[Modality, ...] | OmitType = OMIT
     instructions: str | OmitType = OMIT
-    voice: str | OmitType = OMIT
+    voice: str | OmitType = OMIT    # alloy, echo, shimmer, etc. 
     output_audio_format: str | OmitType = OMIT
     tools: tp.Tuple[Tool, ...] | OmitType = OMIT
     tool_choice: str | OmitType = OMIT

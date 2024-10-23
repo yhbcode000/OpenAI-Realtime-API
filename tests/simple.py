@@ -5,11 +5,23 @@ import dotenv
 
 import openai_realtime_api
 from openai_realtime_api.shared import *
+from openai_realtime_api import defaults
 
 class MyClient(openai_realtime_api.Client):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.display = Display()
+    
+    def logSnapshot(self):
+        with open('conversation.md', 'w') as f:
+            for i, item_id in enumerate(self.server_conversation):
+                item = self.items[item_id]
+                print(i, ':', item, file=f)
+    
+    async def keepLoggingSnapshots(self):
+        while True:
+            await asyncio.sleep(1)
+            self.logSnapshot()
 
     def onError(
         self, event_id: EventID, 
@@ -57,9 +69,19 @@ async def main():
     assert dotenv.load_dotenv('openai_api.env')
     openai_api_key = os.getenv('OPENAI_API_KEY')
     assert openai_api_key is not None
-    async with MyClient.Context(openai_api_key) as client:
+    async with MyClient.Context(openai_api_key, SessionConfig(
+        ResponseConfig(
+            (Modality.AUDIO, Modality.TEXT),
+            defaults.INSTRUCTIONS, 
+            'alloy', 'pcm', (), 'auto', 0.8, 'inf', 
+        ), 
+        'pcm', 'whisper-1', None, 
+    )) as client:
         del openai_api_key
-        ...
+        await asyncio.gather(
+            client.interface.receiveLoop(), 
+            client.keepLoggingSnapshots(), 
+        )
 
 if __name__ == '__main__':
     asyncio.run(main())
