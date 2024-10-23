@@ -29,6 +29,7 @@ class Client(BaseHandler):
             OMIT, OMIT, OMIT, 
         )
         self.server_conversation = Conversation()
+        self.server_responses: tp.Dict[ResponseID, Response] = {}
         
         self.eventIdCount = count()
     
@@ -175,25 +176,25 @@ class Client(BaseHandler):
         self, event_id: EventID, 
         previous_item_id: ItemID, item_id: ItemID,
     ):
-        pass
+        self.server_conversation.insertAfter(ConversationItem(
+            item_id, ConversationItemType.MESSAGE, 
+            Status.COMPLETED, Role.USER, [ContentPart(
+                ContentPartType.INPUT_AUDIO, 
+                None, NOT_HERE, None, 
+            )], 
+        ), previous_item_id)
 
     @log
     def onInputAudioBufferCleared(
         self, event_id: EventID, 
     ):
-        '''
-        Override this. 
-        '''
         pass
-
+    
     @log
     def onInputAudioBufferSpeechStarted(
         self, event_id: EventID, 
         audio_start_ms: int, item_id: ItemID,
     ):
-        '''
-        Override this. 
-        '''
         pass
     
     @log
@@ -201,69 +202,61 @@ class Client(BaseHandler):
         self, event_id: EventID, 
         audio_end_ms: int, item_id: ItemID,
     ):
-        '''
-        Override this. 
-        '''
         pass
-
+    
     @log
     def onResponseCreated(
         self, event_id: EventID, 
-        response_id: str, 
+        response_id: ResponseID, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.server_responses[response_id] = Response(
+            response_id, Status.IN_PROGRESS, None, [], None, 
+        )
     
     @log
     def onResponseDone(
         self, event_id: EventID, 
         response: Response, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.server_responses[response.id_] = response
 
     @log
     def onResponseOutputItemAdded(
         self, event_id: EventID, 
-        response_id: str, output_index: int, 
+        response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        output = self.server_responses[response_id].output
+        assert len(output) == output_index
+        output.append(item)
 
     @log
     def onResponseOutputItemDone(
         self, event_id: EventID, 
-        response_id: str, output_index: int, 
+        response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        output = self.server_responses[response_id].output
+        output[output_index] = item
 
     @log
     def onResponseContentPartAdded(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        output = self.server_responses[response_id].output
+        item = output[output_index]
+        assert item.id_ == item_id
+        content = item.content
+        assert len(content) == content_index
+        content.append(part)
     
     @log
     def onResponseContentPartDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
@@ -275,7 +268,7 @@ class Client(BaseHandler):
     @log
     def onResponseTextDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -287,7 +280,7 @@ class Client(BaseHandler):
     @log
     def onResponseTextDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         text: str, 
     ):
@@ -299,7 +292,7 @@ class Client(BaseHandler):
     @log
     def onResponseAudioTranscriptDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -311,7 +304,7 @@ class Client(BaseHandler):
     @log
     def onResponseAudioTranscriptDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         transcript: str, 
     ):
@@ -323,7 +316,7 @@ class Client(BaseHandler):
     @log
     def onResponseAudioDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -335,7 +328,7 @@ class Client(BaseHandler):
     @log
     def onResponseAudioDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
     ):
         '''
@@ -346,7 +339,7 @@ class Client(BaseHandler):
     @log
     def onResponseFunctionCallArgumentsDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, delta: str, 
     ):
@@ -359,7 +352,7 @@ class Client(BaseHandler):
     @log
     def onResponseFunctionCallArgumentsDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, arguments: str, 
     ):

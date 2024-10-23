@@ -14,6 +14,7 @@ TAG = 'OpenAI Realtime API'
 
 EventID = str
 ItemID = str
+ResponseID = str
 
 def identity(x: tp.Any, /):
     return x
@@ -523,7 +524,7 @@ class OpenAIError:
 
 @dataclass(frozen=True)
 class Response:
-    id_: str
+    id_: ResponseID
     status: Status
     status_details: tp.Dict | None
     output: tp.List[ConversationItem]

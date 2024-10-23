@@ -536,7 +536,7 @@ class BaseHandler:
 
     def onResponseCreated(
         self, event_id: EventID, 
-        response_id: str, 
+        response_id: ResponseID, 
     ):
         '''
         Override this. 
@@ -554,7 +554,7 @@ class BaseHandler:
 
     def onResponseOutputItemAdded(
         self, event_id: EventID, 
-        response_id: str, output_index: int, 
+        response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
         '''
@@ -564,7 +564,7 @@ class BaseHandler:
 
     def onResponseOutputItemDone(
         self, event_id: EventID, 
-        response_id: str, output_index: int, 
+        response_id: ResponseID, output_index: int, 
         item: ConversationItem, 
     ):
         '''
@@ -574,7 +574,7 @@ class BaseHandler:
 
     def onResponseContentPartAdded(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
@@ -585,7 +585,7 @@ class BaseHandler:
     
     def onResponseContentPartDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
     ):
@@ -596,7 +596,7 @@ class BaseHandler:
     
     def onResponseTextDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -607,7 +607,7 @@ class BaseHandler:
 
     def onResponseTextDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         text: str, 
     ):
@@ -618,7 +618,7 @@ class BaseHandler:
 
     def onResponseAudioTranscriptDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -629,7 +629,7 @@ class BaseHandler:
 
     def onResponseAudioTranscriptDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         transcript: str, 
     ):
@@ -640,7 +640,7 @@ class BaseHandler:
 
     def onResponseAudioDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         delta: str, 
     ):
@@ -651,7 +651,7 @@ class BaseHandler:
 
     def onResponseAudioDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
     ):
         '''
@@ -661,7 +661,7 @@ class BaseHandler:
 
     def onResponseFunctionCallArgumentsDelta(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, delta: str, 
     ):
@@ -673,7 +673,7 @@ class BaseHandler:
 
     def onResponseFunctionCallArgumentsDone(
         self, event_id: EventID, 
-        response_id: str, item_id: ItemID,
+        response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         call_id: str, arguments: str, 
     ):
