@@ -2,10 +2,15 @@ from contextlib import asynccontextmanager
 from itertools import count
 import asyncio
 import inspect
+import time
 
 from .shared import *
 from .interface import Interface, BaseHandler, MODEL
 from openai_realtime_api import defaults
+from .conversation import Conversation
+
+SEND_TIME = 'send_time'
+UNACKED_CLIENT_EVENT_ABNORMAL_TIME = 3.0 # sec
 
 class Client(BaseHandler):
     def __init__(self, interface: Interface):
@@ -14,6 +19,7 @@ class Client(BaseHandler):
         If you are in a hurry, it's also ok to `Client.Open(...)`.  
         '''
         self.interface = interface
+        interface.sendMiddleware = self.sendMiddleware
 
         self.lock = asyncio.Lock()
 
@@ -27,7 +33,7 @@ class Client(BaseHandler):
             ), 
             OMIT, OMIT, OMIT, 
         )
-        self.server_conversation: tp.List[...] = []
+        self.server_conversation = Conversation()
         
         self.eventIdCount = count()
     
@@ -38,10 +44,13 @@ class Client(BaseHandler):
         model: str = MODEL, 
     ):
         client = cls.__new__(cls)
-        async with Interface.Context(api_key, client, model) as interface:
-            client.__init__(interface)
-            await interface.sessionUpdate(sessionConfig, client.nextEventId())
-            yield client
+        try:
+            async with Interface.Context(api_key, client, model) as interface:
+                client.__init__(interface)
+                await interface.sessionUpdate(sessionConfig, client.nextEventId())
+                yield client
+        finally:
+            client.cleanup()
     
     @classmethod
     async def Open(
@@ -54,6 +63,35 @@ class Client(BaseHandler):
         client.__init__(interface)
         await interface.sessionUpdate(sessionConfig, client.nextEventId())
         return client
+    
+    async def close(self):
+        await self.interface.close()
+        self.cleanup()
+    
+    def cleanup(self):
+        abnormal_unacked_client_events = []
+        for v in self.client_events_unacknowledged.values():
+            if time.time() - v[SEND_TIME] > UNACKED_CLIENT_EVENT_ABNORMAL_TIME:
+                abnormal_unacked_client_events.append(v)
+        if abnormal_unacked_client_events:
+            print(f'The following client events are not acknowledged by the server for over {UNACKED_CLIENT_EVENT_ABNORMAL_TIME} seconds:')
+            print('', *abnormal_unacked_client_events, sep='\n    ')
+            raise RuntimeError('Abnormal unacknowledged client events.')
+
+    def sendMiddleware(self, payload: tp.Dict[str, tp.Any]):
+        if payload['type'] in (
+            f'{SESSION}.{UPDATE}',
+            f'{INPUT_AUDIO_BUFFER}.{COMMIT}', 
+            f'{INPUT_AUDIO_BUFFER}.{CLEAR}',
+            f'{CONVERSATION}.{ITEM}.{CREATE}',
+            f'{CONVERSATION}.{ITEM}.{TRUNCATE}',
+            f'{CONVERSATION}.{ITEM}.{DELETE}',
+            f'{RESPONSE}.{CREATE}',
+        ):
+            self.client_events_unacknowledged[
+                payload['event_id']
+            ] = {**payload, SEND_TIME: time.time()}
+        return payload
     
     def nextEventId(self) -> EventID:
         return f'ibc_{next(self.eventIdCount) : 04d}'
@@ -120,60 +158,53 @@ class Client(BaseHandler):
         self, event_id: EventID, 
         previous_item_id: ItemID, item: ConversationItem, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.server_conversation.insertAfter(item, previous_item_id)
     
     @log
     def onConversationItemInputAudioTranscriptionCompleted(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, transcript: str, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        content = self.server_conversation.cells[item_id].item.content
+        old_part = content[content_index]
+        assert old_part.transcript is None
+        content[content_index] = ContentPart(
+            old_part.type_, 
+            old_part.text, 
+            old_part.audio, 
+            transcript, 
+        )
     
     @log
     def onConversationItemInputAudioTranscriptionFailed(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, error: OpenAIError, 
     ):
-        '''
-        Override this. 
-        '''
-        # If you overrided `...TranscriptionCompleted()`, you should override this too. Hence the default fatal exception.  
-        error.throw()
+        super().onConversationItemInputAudioTranscriptionFailed(
+            event_id, item_id, content_index, error,
+        )
     
     @log
     def onConversationItemTruncated(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, audio_end_ms: int, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.server_conversation.cells[item_id].audio_truncate = (
+            content_index, audio_end_ms, 
+        )
 
     @log
     def onConversationItemDeleted(
         self, event_id: EventID, 
         item_id: ItemID, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.server_conversation.pop(item_id)
     
     @log
     def onInputAudioBufferCommitted(
         self, event_id: EventID, 
         previous_item_id: ItemID, item_id: ItemID,
     ):
-        '''
-        Override this. 
-        '''
         pass
 
     @log

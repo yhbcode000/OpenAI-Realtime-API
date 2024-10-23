@@ -15,6 +15,9 @@ TAG = 'OpenAI Realtime API'
 EventID = str
 ItemID = str
 
+def identity(x: tp.Any, /):
+    return x
+
 class OmitType: 
     _singleton = None
 
@@ -23,7 +26,21 @@ class OmitType:
             cls._singleton = super().__new__(cls)
         return cls._singleton
 
-OMIT = OmitType()   # Use this to exclude a JSON key from your request.
+OMIT = OmitType()
+# Use this to exclude a JSON key from your request.
+# Meaning: use default / status quo.  
+
+class NotHereType: 
+    _singleton = None
+
+    def __new__(cls):
+        if cls._singleton is None:
+            cls._singleton = super().__new__(cls)
+        return cls._singleton
+
+NOT_HERE = NotHereType()
+# Meaning: The info is conceptually existent but not here.  
+# e.g. audio that the remote, to save bandwidth, won't give us.  
 
 def withoutOmits(x: tp.Dict, /):
     return {k: v for k, v in x.items() if v is not OMIT}
@@ -338,7 +355,7 @@ class Role(Enum):
 class ContentPart:
     type_: ContentPartType
     text: str | None = None
-    audio: str | None = None
+    audio: str | NotHereType | None = None
     transcript: str | None = None
 
     def __post_init__(self):
@@ -348,8 +365,11 @@ class ContentPart:
         assert (
             self.type_ in (ContentPartType.AUDIO, ContentPartType.INPUT_AUDIO)
         ) == self.audio is not None
+        if self.transcript is not None:
+            assert self.audio is not None
     
     def asPrimitive(self):
+        assert self.audio is not NOT_HERE
         return {
             'type': str(self.type_),
             'text': self.text,
@@ -360,10 +380,15 @@ class ContentPart:
     @staticmethod
     def fromPrimitive(a: tp.Dict, /):
         remaining = {**a}
+        type_ = ContentPartType(remaining.pop('type'))
+        if type_ == ContentPartType.AUDIO:
+            audio = remaining.pop('audio', None)
+            if audio is None:
+                audio = NOT_HERE
         instance = __class__(
-            ContentPartType(remaining.pop('type')),
+            type_,
             remaining.pop('text', None),
-            remaining.pop('audio', None),
+            audio,
             remaining.pop('transcript', None),
         )
         return instance, remaining

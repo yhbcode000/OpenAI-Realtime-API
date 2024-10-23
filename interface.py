@@ -24,6 +24,7 @@ class Interface:
         self.ws = ws
         self.handler = handler
 
+        self.sendMiddleware = identity
         self.closed_by_me = False
 
     @classmethod
@@ -57,7 +58,11 @@ class Interface:
         )
 
     async def __omitJsonSend(self, event: tp.Dict):
-        await self.ws.send(json.dumps(deepWithoutOmits(event)))
+        await self.ws.send(json.dumps(
+            self.sendMiddleware(
+                deepWithoutOmits(event), 
+            ), 
+        ))
 
     async def sessionUpdate(
         self, 

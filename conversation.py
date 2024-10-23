@@ -11,6 +11,9 @@ class Conversation:
         item: ConversationItem
         prev: ItemID | None
         next_: ItemID | None
+
+        # (content_index, audio_end_ms)
+        audio_truncate: tp.Tuple[int, int] | None = None
     
         def nextCell(self):
             if self.next_ is None:
@@ -39,6 +42,18 @@ class Conversation:
         prevCell.next_ = item.id_
         if next_id is not None:
             self.cells[next_id].prev = item.id_
+    
+    def pop(self, item_id: ItemID, /):
+        cell = self.cells.pop(item_id)
+        prev_id = cell.prev
+        next_id = cell.next_
+        if prev_id is not None:
+            self.cells[prev_id].next_ = next_id
+        if next_id is not None:
+            self.cells[next_id].prev = prev_id
+        if item_id == self.root:
+            self.root = next_id
+        return cell.item
     
     def __iter__(self):
         item_id = self.root
