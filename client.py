@@ -293,9 +293,6 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         delta: str, 
     ):
-        '''
-        Override this. 
-        '''
         pass
 
     @log
@@ -305,10 +302,10 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         text: str, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        self.updateContentPart(
+            response_id, item_id, output_index, content_index,
+            ContentPart(ContentPartType.TEXT, text),
+        )
 
     @log
     def onResponseAudioTranscriptDelta(
@@ -317,9 +314,6 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         delta: str, 
     ):
-        '''
-        Override this. 
-        '''
         pass
 
     @log
@@ -329,10 +323,23 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         transcript: str, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        try:
+            old_part = self.items[item_id].content[content_index]
+        except (KeyError, IndexError):
+            new_part = ContentPart(
+                ContentPartType.AUDIO, None, NOT_HERE, transcript, 
+            )
+        else:
+            new_part = ContentPart(
+                old_part.type_, 
+                old_part.text,
+                old_part.audio,
+                transcript,
+            )
+        self.updateContentPart(
+            response_id, item_id, output_index, content_index,
+            new_part,
+        )
 
     @log
     def onResponseAudioDelta(
@@ -341,9 +348,6 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         delta: str, 
     ):
-        '''
-        Override this. 
-        '''
         pass
 
     @log
@@ -352,10 +356,23 @@ class Client(BaseHandler):
         response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        try:
+            old_part = self.items[item_id].content[content_index]
+        except (KeyError, IndexError):
+            new_part = ContentPart(
+                ContentPartType.AUDIO, None, NOT_HERE, None, 
+            )
+        else:
+            new_part = ContentPart(
+                old_part.type_, 
+                old_part.text,
+                NOT_HERE,
+                old_part.transcript,
+            )
+        self.updateContentPart(
+            response_id, item_id, output_index, content_index,
+            new_part,
+        )
 
     @log
     def onResponseFunctionCallArgumentsDelta(
@@ -364,10 +381,6 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         call_id: str, delta: str, 
     ):
-        '''
-        Ignore this. 
-        You'd have to have 0 chill to optimize your function to take streaming arguments.
-        '''
         pass
 
     @log
@@ -377,19 +390,27 @@ class Client(BaseHandler):
         output_index: int, content_index: int, 
         call_id: str, arguments: str, 
     ):
-        '''
-        Override this. 
-        '''
-        pass
+        _ = content_index   # meaningless
+        assert self.server_responses[response_id].output[output_index] == item_id
+        old_item = self.items[item_id]
+        assert old_item.call_id == call_id
+        self.items[item_id] = ConversationItem(
+            old_item.id_, 
+            old_item.type_, 
+            old_item.status, 
+            old_item.role, 
+            old_item.content, 
+            old_item.call_id, 
+            old_item.name, 
+            arguments, 
+            old_item.output, 
+        )
 
     @log
     def onRateLimitsUpdated(
         self, event_id: EventID, 
         rateLimits: tp.Tuple[RateLimit, ...], 
     ):
-        '''
-        Override this. 
-        '''
         pass
 
 def deepUpdate(
