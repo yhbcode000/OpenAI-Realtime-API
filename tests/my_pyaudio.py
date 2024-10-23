@@ -72,6 +72,7 @@ def PushToTalk(
             pass
 
     async def inputter():
+        nonlocal is_pressed
         print('Press Enter to toggle push-to-talk.')
         while True:
             try:
