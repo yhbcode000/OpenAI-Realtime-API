@@ -19,7 +19,7 @@ SESSION_CONFIG = SessionConfig(
     ResponseConfig(
         (Modality.TEXT, Modality.AUDIO),
         INSTRUCTIONS,
-        'alloy', 'pcm', (), 'auto', 0.8, 'inf', 
+        'alloy', 'pcm16', (), 'auto', 0.8, 'inf', 
     ), 
-    'pcm', None, None, 
+    'pcm16', None, None, 
 )
