@@ -4,6 +4,7 @@ import asyncio
 import inspect
 from enum import Enum
 from functools import wraps
+import time
 
 from .shared import *
 from .interface import Interface, BaseHandler, MODEL
@@ -112,7 +113,8 @@ class Client(BaseHandler):
     @staticmethod
     def log(side: Side):
         def decorator(f: F) -> F:
-            formal_params = inspect.signature(f).parameters.keys()
+            sig = inspect.signature(f)
+            formal_params = sig.parameters.keys()
             @wraps(f)
             def wrapper(self: __class__, *args, **kw):
                 result = f(self, *args, **kw)
@@ -122,10 +124,33 @@ class Client(BaseHandler):
                 event_id = kw['event_id']
                 event_log = self.event_logs[side]
                 assert event_id not in event_log
+                kw[METHOD_NAME] = f.__name__
+                kw[TIMESTAMP] = time.time()
                 event_log[event_id] = kw
                 return result
             return tp.cast(F, wrapper)
         return decorator
+    
+    def seekEventLog(self, event_id: EventID):
+        for side in Side:
+            try:
+                return side, self.event_logs[side][event_id]
+            except KeyError:
+                pass
+        raise KeyError(event_id)
+    
+    def reprCell(self, cell: Conversation.Cell):
+        buf = ['']
+        if cell.audio_truncate is not None:
+            content_index, audio_end_ms = cell.audio_truncate
+            buf.append(f'truncate: {content_index = }, {audio_end_ms = }')
+        buf.append('modified by:')
+        for event_id in cell.modified_by:
+            event_log = self.event_logs[Side.SERVER][event_id]
+            buf.append(f'''  {
+                event_log[TIMESTAMP]:5.1f
+            } {event_id:28s} {event_log[METHOD_NAME]}''')
+        return '\n  '.join(buf)[1:]
     
     @log(Side.SERVER)
     def onError(
@@ -175,7 +200,10 @@ class Client(BaseHandler):
     ):
         assert item.id_ not in self.items
         self.items[item.id_] = item
-        self.server_conversation.insertAfter(item.id_, previous_item_id)
+        self.server_conversation.insertAfter(
+            item.id_, previous_item_id, 
+        )
+        self.server_conversation.touched(item.id_, event_id)
     
     @log(Side.SERVER)
     def onConversationItemInputAudioTranscriptionCompleted(
@@ -193,6 +221,7 @@ class Client(BaseHandler):
         self.items[item_id] = self.items[item_id].withUpdatedContentPart(
             content_index, new_part, 
         )
+        self.server_conversation.touched(item_id, event_id)
     
     @log(Side.SERVER)
     def onConversationItemInputAudioTranscriptionFailed(
@@ -284,6 +313,7 @@ class Client(BaseHandler):
         )
         assert item.id_ not in self.items
         self.items[item.id_] = item
+        self.server_conversation.touched(item.id_, event_id)
 
     @log(Side.SERVER)
     def onResponseOutputItemDone(
@@ -295,7 +325,7 @@ class Client(BaseHandler):
         self.items[item.id_] = item
 
     def updateContentPart(
-        self, 
+        self, by_event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
         output_index: int, content_index: int, 
         part: ContentPart, 
@@ -304,6 +334,7 @@ class Client(BaseHandler):
         self.items[item_id] = self.items[
             item_id
         ].withUpdatedContentPart(content_index, part)
+        self.server_conversation.touched(item_id, by_event_id)
 
     @log(Side.SERVER)
     def onResponseContentPartAdded(
@@ -313,6 +344,7 @@ class Client(BaseHandler):
         part: ContentPart, 
     ):
         self.updateContentPart(
+            event_id, 
             response_id, item_id, output_index, content_index, part,
         )
     
@@ -324,6 +356,7 @@ class Client(BaseHandler):
         part: ContentPart, 
     ):
         self.updateContentPart(
+            event_id, 
             response_id, item_id, output_index, content_index, part,
         )
     
@@ -344,6 +377,7 @@ class Client(BaseHandler):
         text: str, 
     ):
         self.updateContentPart(
+            event_id, 
             response_id, item_id, output_index, content_index,
             ContentPart(ContentPartType.TEXT, text),
         )
@@ -378,6 +412,7 @@ class Client(BaseHandler):
                 transcript,
             )
         self.updateContentPart(
+            event_id, 
             response_id, item_id, output_index, content_index,
             new_part,
         )
@@ -411,6 +446,7 @@ class Client(BaseHandler):
                 old_part.transcript,
             )
         self.updateContentPart(
+            event_id, 
             response_id, item_id, output_index, content_index,
             new_part,
         )
@@ -446,6 +482,7 @@ class Client(BaseHandler):
             arguments, 
             old_item.output, 
         )
+        self.server_conversation.touched(item_id, event_id)
 
     @log(Side.SERVER)
     def onRateLimitsUpdated(

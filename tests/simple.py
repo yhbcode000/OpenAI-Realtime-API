@@ -33,9 +33,10 @@ class MyClient(openai_realtime_api.Client):
     
     def logSnapshot(self):
         with open('conversation.md', 'w') as f:
-            for i, item_id in enumerate(self.server_conversation):
+            for i, (item_id, cell) in enumerate(self.server_conversation):
                 item = self.items[item_id]
-                print(i, ':', item, file=f)
+                print(i, item, file=f)
+                print(self.reprCell(cell), file=f)
     
     async def keepLoggingSnapshots(self):
         while True:

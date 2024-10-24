@@ -123,6 +123,9 @@ AUDIO = 'audio'
 FUNCTION_CALL_ARGUMENTS = 'function_call_arguments'
 RATE_LIMITS = 'rate_limits'
 
+METHOD_NAME = 'method_name'
+TIMESTAMP = 'timestamp'
+
 @contextmanager
 def MustDrain(a: tp.Dict, /):
     '''

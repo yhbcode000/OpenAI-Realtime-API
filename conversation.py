@@ -13,12 +13,13 @@ class Conversation:
 
         # (content_index, audio_end_ms)
         audio_truncate: tp.Tuple[int, int] | None = None
+        modified_by: tp.List[EventID] = []
     
         def nextCell(self):
             if self.next_ is None:
                 raise StopIteration
             return self.parent.cells[self.next_]
-    
+
     def __init__(self):
         self.cells: tp.Dict[ItemID, Conversation.Cell] = {}
         self.root: ItemID | None = None
@@ -30,10 +31,9 @@ class Conversation:
         if previous_item_id is None:
             assert self.root is None
             self.root = item_id
-            self.cells[item_id] = self.Cell(
-                self, None, None,
-            )
-            return
+            cell = self.Cell(self, None, None)
+            self.cells[item_id] = cell
+            return cell
         prevCell = self.cells[previous_item_id]
         next_id = prevCell.next_
         cell = self.Cell(self, previous_item_id, next_id)
@@ -41,6 +41,7 @@ class Conversation:
         prevCell.next_ = item_id
         if next_id is not None:
             self.cells[next_id].prev = item_id
+        return cell
     
     def pop(self, item_id: ItemID, /):
         cell = self.cells.pop(item_id)
@@ -57,5 +58,9 @@ class Conversation:
         item_id = self.root
         while item_id is not None:
             cell = self.cells[item_id]
-            yield item_id
+            yield item_id, cell
             item_id = cell.next_
+    
+    def touched(self, item_id: ItemID, event_id: EventID):
+        cell = self.cells[item_id]
+        cell.modified_by.append(event_id)
