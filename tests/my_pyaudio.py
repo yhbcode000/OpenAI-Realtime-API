@@ -57,6 +57,7 @@ def PushToTalk(
     stream: pyaudio.Stream,
     onAudioIn: tp.Callable[[bytes, int], tp.Awaitable[None]], 
     onRelease: tp.Callable[[], tp.Awaitable[None]], 
+    onInterrupt: tp.Callable[[], tp.Awaitable[None]],
     page_len: int, 
 ):
     lock = asyncio.Lock()
@@ -81,6 +82,7 @@ def PushToTalk(
                     is_pressed = not is_pressed
                 if is_pressed:
                     print('Now recording...')
+                    await onInterrupt()
                 else:
                     print('Recording finished.')
                     await onRelease()
