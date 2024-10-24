@@ -94,12 +94,12 @@ async def main():
             n_samples: int,
         ):
             base64_encoded = base64.b64encode(data).decode()
-            await client.interface.inputAudioBufferAppend(
+            await client.inputAudioBufferAppend(
                 base64_encoded, client.nextEventId(), 
             )
         
         async def commitAudio():
-            await client.interface.inputAudioBufferCommit(client.nextEventId())
+            await client.inputAudioBufferCommit(client.nextEventId())
         
         with pyAudio() as pa:
             outStream = pa.open(

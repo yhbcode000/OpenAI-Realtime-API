@@ -2,12 +2,19 @@ from contextlib import asynccontextmanager
 from itertools import count
 import asyncio
 import inspect
-import time
+from enum import Enum
+from functools import wraps
 
 from .shared import *
 from .interface import Interface, BaseHandler, MODEL
 from openai_realtime_api import defaults
 from .conversation import Conversation
+
+F = tp.TypeVar('F', bound=tp.Callable[..., tp.Any])
+
+class Side(Enum):
+    SERVER = 'server'
+    CLIENT = 'client'
 
 class Client(BaseHandler):
     def __init__(self, interface: Interface):
@@ -19,8 +26,11 @@ class Client(BaseHandler):
 
         self.lock = asyncio.Lock()
 
-        # A shallow copy of all server events we received.  
-        self.server_event_log: tp.Dict[EventID, tp.Dict[str, tp.Any]] = {}
+        # A shallow copy of all events we received.  
+        self.event_logs: tp.Dict[Side, tp.Dict[EventID, tp.Dict[str, tp.Any]]] = {
+            Side.SERVER: {}, 
+            Side.CLIENT: {}, 
+        }
 
         self.server_sessionConfig: SessionConfig = SessionConfig(
             ResponseConfig(
@@ -33,6 +43,21 @@ class Client(BaseHandler):
         self.server_responses: tp.Dict[ResponseID, Response] = {}
         
         self.eventIdCount = count()
+
+        def clientEventDecorator(f: F) -> F:
+            g = self.log(Side.CLIENT)(f)
+            h = self.autoFillEventId(g)
+            return h
+        
+        self.sessionUpdate            = clientEventDecorator(self.interface.sessionUpdate)
+        self.inputAudioBufferAppend   = clientEventDecorator(self.interface.inputAudioBufferAppend)
+        self.inputAudioBufferCommit   = clientEventDecorator(self.interface.inputAudioBufferCommit)
+        self.inputAudioBufferClear    = clientEventDecorator(self.interface.inputAudioBufferClear)
+        self.conversationItemCreate   = clientEventDecorator(self.interface.conversationItemCreate)
+        self.conversationItemTruncate = clientEventDecorator(self.interface.conversationItemTruncate)
+        self.conversationItemDelete   = clientEventDecorator(self.interface.conversationItemDelete)
+        self.responseCreate           = clientEventDecorator(self.interface.responseCreate)
+        self.responseCancel           = clientEventDecorator(self.interface.responseCancel)
     
     @classmethod
     @asynccontextmanager
@@ -72,21 +97,37 @@ class Client(BaseHandler):
         return f'ibc_{next(self.eventIdCount) : 04d}'
         # [i]nitiated [b]y [c]lient
     
-    @staticmethod
-    def log(f: tp.Callable):
+    def autoFillEventId(self, f: F) -> F:
         formal_params = inspect.signature(f).parameters.keys()
-        def wrapper(self: __class__, *args, **kw):
-            result = f(self, *args, **kw)
+        @wraps(f)
+        def wrapper(*args, **kw):
             for k, v in zip(formal_params, args):
                 assert k not in kw
                 kw[k] = v
-            event_id = kw['event_id']
-            assert event_id not in self.server_event_log
-            self.server_event_log[event_id] = kw
-            return result
-        return wrapper
+            if 'event_id' not in kw:
+                kw['event_id'] = self.nextEventId()
+            return f(*args, **kw)
+        return tp.cast(F, wrapper)
+
+    @staticmethod
+    def log(side: Side):
+        def decorator(f: F) -> F:
+            formal_params = inspect.signature(f).parameters.keys()
+            @wraps(f)
+            def wrapper(self: __class__, *args, **kw):
+                result = f(self, *args, **kw)
+                for k, v in zip(formal_params, args):
+                    assert k not in kw
+                    kw[k] = v
+                event_id = kw['event_id']
+                event_log = self.event_logs[side]
+                assert event_id not in event_log
+                event_log[event_id] = kw
+                return result
+            return tp.cast(F, wrapper)
+        return decorator
     
-    @log
+    @log(Side.SERVER)
     def onError(
         self, event_id: EventID, 
         error: OpenAIError, do_warn: bool = True, 
@@ -104,7 +145,7 @@ class Client(BaseHandler):
                 self.server_sessionConfig, r = SessionConfig.fromPrimitive(u)
                 mutate(r)
     
-    @log
+    @log(Side.SERVER)
     def onSessionCreated(
         self, event_id: EventID, 
         sessionConfig: SessionConfig,
@@ -112,7 +153,7 @@ class Client(BaseHandler):
     ):
         self.updateServerSessionConfig(sessionConfig)
 
-    @log
+    @log(Side.SERVER)
     def onSessionUpdated(
         self, event_id: EventID, 
         sessionConfig: SessionConfig,
@@ -120,14 +161,14 @@ class Client(BaseHandler):
     ):
         self.updateServerSessionConfig(sessionConfig)
     
-    @log
+    @log(Side.SERVER)
     def onConversationCreated(
         self, event_id: EventID, 
         conversation_id: str, 
     ):
         pass
     
-    @log
+    @log(Side.SERVER)
     def onConversationItemCreated(
         self, event_id: EventID, 
         previous_item_id: ItemID, item: ConversationItem, 
@@ -136,7 +177,7 @@ class Client(BaseHandler):
         self.items[item.id_] = item
         self.server_conversation.insertAfter(item.id_, previous_item_id)
     
-    @log
+    @log(Side.SERVER)
     def onConversationItemInputAudioTranscriptionCompleted(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, transcript: str, 
@@ -153,7 +194,7 @@ class Client(BaseHandler):
             content_index, new_part, 
         )
     
-    @log
+    @log(Side.SERVER)
     def onConversationItemInputAudioTranscriptionFailed(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, error: OpenAIError, 
@@ -162,7 +203,7 @@ class Client(BaseHandler):
             event_id, item_id, content_index, error,
         )
     
-    @log
+    @log(Side.SERVER)
     def onConversationItemTruncated(
         self, event_id: EventID, 
         item_id: ItemID, content_index: int, audio_end_ms: int, 
@@ -171,41 +212,41 @@ class Client(BaseHandler):
             content_index, audio_end_ms, 
         )
 
-    @log
+    @log(Side.SERVER)
     def onConversationItemDeleted(
         self, event_id: EventID, 
         item_id: ItemID, 
     ):
         self.server_conversation.pop(item_id)
     
-    @log
+    @log(Side.SERVER)
     def onInputAudioBufferCommitted(
         self, event_id: EventID, 
         previous_item_id: ItemID, item_id: ItemID,
     ):
         self.server_conversation.insertAfter(item_id, previous_item_id)
 
-    @log
+    @log(Side.SERVER)
     def onInputAudioBufferCleared(
         self, event_id: EventID, 
     ):
         pass
     
-    @log
+    @log(Side.SERVER)
     def onInputAudioBufferSpeechStarted(
         self, event_id: EventID, 
         audio_start_ms: int, item_id: ItemID,
     ):
         pass
     
-    @log
+    @log(Side.SERVER)
     def onInputAudioBufferSpeechStopped(
         self, event_id: EventID, 
         audio_end_ms: int, item_id: ItemID,
     ):
         pass
     
-    @log
+    @log(Side.SERVER)
     def onResponseCreated(
         self, event_id: EventID, 
         response_id: ResponseID, 
@@ -214,7 +255,7 @@ class Client(BaseHandler):
             response_id, Status.IN_PROGRESS, None, (), None, 
         )
     
-    @log
+    @log(Side.SERVER)
     def onResponseDone(
         self, event_id: EventID, 
         response: Response, items: tp.Tuple[ConversationItem, ...], 
@@ -226,7 +267,7 @@ class Client(BaseHandler):
             pT = deepWithout((None, OMIT, NOT_HERE), theirs.asPrimitive())
             assert deepUpdate(pM, pT) == pM
 
-    @log
+    @log(Side.SERVER)
     def onResponseOutputItemAdded(
         self, event_id: EventID, 
         response_id: ResponseID, output_index: int, 
@@ -244,7 +285,7 @@ class Client(BaseHandler):
         assert item.id_ not in self.items
         self.items[item.id_] = item
 
-    @log
+    @log(Side.SERVER)
     def onResponseOutputItemDone(
         self, event_id: EventID, 
         response_id: ResponseID, output_index: int, 
@@ -264,7 +305,7 @@ class Client(BaseHandler):
             item_id
         ].withUpdatedContentPart(content_index, part)
 
-    @log
+    @log(Side.SERVER)
     def onResponseContentPartAdded(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -275,7 +316,7 @@ class Client(BaseHandler):
             response_id, item_id, output_index, content_index, part,
         )
     
-    @log
+    @log(Side.SERVER)
     def onResponseContentPartDone(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -286,7 +327,7 @@ class Client(BaseHandler):
             response_id, item_id, output_index, content_index, part,
         )
     
-    @log
+    @log(Side.SERVER)
     def onResponseTextDelta(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -295,7 +336,7 @@ class Client(BaseHandler):
     ):
         pass
 
-    @log
+    @log(Side.SERVER)
     def onResponseTextDone(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -307,7 +348,7 @@ class Client(BaseHandler):
             ContentPart(ContentPartType.TEXT, text),
         )
 
-    @log
+    @log(Side.SERVER)
     def onResponseAudioTranscriptDelta(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -316,7 +357,7 @@ class Client(BaseHandler):
     ):
         pass
 
-    @log
+    @log(Side.SERVER)
     def onResponseAudioTranscriptDone(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -341,7 +382,7 @@ class Client(BaseHandler):
             new_part,
         )
 
-    @log
+    @log(Side.SERVER)
     def onResponseAudioDelta(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -350,7 +391,7 @@ class Client(BaseHandler):
     ):
         pass
 
-    @log
+    @log(Side.SERVER)
     def onResponseAudioDone(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -374,7 +415,7 @@ class Client(BaseHandler):
             new_part,
         )
 
-    @log
+    @log(Side.SERVER)
     def onResponseFunctionCallArgumentsDelta(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -383,7 +424,7 @@ class Client(BaseHandler):
     ):
         pass
 
-    @log
+    @log(Side.SERVER)
     def onResponseFunctionCallArgumentsDone(
         self, event_id: EventID, 
         response_id: ResponseID, item_id: ItemID,
@@ -406,7 +447,7 @@ class Client(BaseHandler):
             old_item.output, 
         )
 
-    @log
+    @log(Side.SERVER)
     def onRateLimitsUpdated(
         self, event_id: EventID, 
         rateLimits: tp.Tuple[RateLimit, ...], 
