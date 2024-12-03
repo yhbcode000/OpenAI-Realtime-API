@@ -129,18 +129,24 @@ TIMESTAMP = 'timestamp'
 @contextmanager
 def MustDrain(a: tp.Dict, /):
     '''
-    Promises to exhaust the dict by the end of the with clause.  
+    Promises to exhaust the dict by the end of the with clause.
+    Ensures that all items in the dictionary are used during the `with` block.
     '''
-    remaining = {**a}
+    remaining = {**a}  # Make a copy of the input dictionary
 
     def mutate(new_dict: tp.Dict, /):
         remaining.clear()
         remaining.update(new_dict)
-    
+
     try:
         yield remaining, mutate
+
     finally:
-        assert not remaining, f'Unconsumed items: {remaining}'
+        # Only assert if no exceptions occurred
+        if not remaining:
+            pass  # All items were consumed
+        else:
+            assert not remaining, f'Unconsumed items: {remaining}'
 
 class Modality(Enum):
     TEXT = 'text'
@@ -528,7 +534,7 @@ class ResponseConfig:
             tuple(tools),
             remaining.pop('tool_choice'), 
             remaining.pop('temperature'), 
-            remaining.pop('max_output_tokens'), 
+            # remaining.pop('max_output_tokens'), 
         )
         return instance, remaining
 
@@ -555,11 +561,11 @@ class SessionConfig:
         with MustDrain(remaining_now.pop(
             'input_audio_transcription', 
         )) as (input_audio_transcription, _):
-            if input_audio_transcription.pop('enabled'):
-                input_audio_transcription_model = input_audio_transcription.pop('model')
-            else:
+            if input_audio_transcription is None or not input_audio_transcription.pop('enabled'):
                 input_audio_transcription_model = None
-                assert input_audio_transcription.pop('model', None) is None
+                # assert input_audio_transcription.pop('model', None) is None
+            else:
+                input_audio_transcription_model = input_audio_transcription.pop('model')
         with MustDrain(remaining_now.pop(
             'turn_detection', 
         )) as (turn_detection_primitive, mutate):

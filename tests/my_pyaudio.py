@@ -34,7 +34,7 @@ def SmallBuffer(
     Limit latency by pretending there's a small audio buffer.  
     Writing blocks if the conceptual buffer is full.  
     '''
-    assert not stream.is_active
+    assert not stream.is_active()
     buffer_time = buffer_n_samples / sr
     if verbose:
         print(f'SmallBuffer maximum latency = {math.ceil(buffer_time * 1000)} ms.')

@@ -8,7 +8,7 @@ import time
 
 from .shared import *
 from .interface import Interface, BaseHandler, MODEL
-from openai_realtime_api import defaults
+from . import defaults
 from .conversation import Conversation
 
 F = tp.TypeVar('F', bound=tp.Callable[..., tp.Any])
@@ -116,7 +116,7 @@ class Client(BaseHandler):
             sig = inspect.signature(f)
             formal_params = sig.parameters.keys()
             @wraps(f)
-            def wrapper(self: __class__, *args, **kw):
+            def wrapper(self, *args, **kw):
                 result = f(self, *args, **kw)
                 for k, v in zip(formal_params, args):
                     assert k not in kw

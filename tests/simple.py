@@ -10,8 +10,7 @@ import openai_realtime_api
 from openai_realtime_api.shared import *
 from openai_realtime_api import defaults
 from openai_realtime_api.speech_player import SpeechPlayer, appendSpeechType, setEndOfSpeechType
-from openai_realtime_api.tests.my_pyaudio import pyAudio, SmallBuffer, PushToTalk
-from shared import EventID, ItemID, ResponseID
+from my_pyaudio import pyAudio, SmallBuffer, PushToTalk
 
 SR = 24000
 PAGE_LEN = 2048

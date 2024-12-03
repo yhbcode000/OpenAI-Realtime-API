@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .shared import *
 
@@ -13,7 +13,7 @@ class Conversation:
 
         # (content_index, audio_end_ms)
         audio_truncate: tp.Tuple[int, int] | None = None
-        modified_by: tp.List[EventID] = []
+        modified_by: tp.List[EventID] = field(default_factory=list)
     
         def nextCell(self):
             if self.next_ is None:
